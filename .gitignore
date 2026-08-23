@@ -5,3 +5,4 @@ sdkconfig.old
 dependencies.lock
 main/secrets.h
 agent/.token
+calibration.json

@@ -18,6 +18,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PORT = 8765
 REFRESH_SEC = 30          # как часто перечитывать статистику ccusage
+CALIB_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          "calibration.json")
 # Лимит недели в долларах — подстройте под свой тариф (используется
 # только для полосы "Week %" внизу экрана).
 WEEKLY_COST_LIMIT_USD = float(os.environ.get("TM_WEEK_LIMIT_USD", "140"))
@@ -31,6 +33,47 @@ _stats = {
     "week_pct": 0,
     "ok": False,
 }
+
+
+def _load_calibration():
+    try:
+        return json.load(open(CALIB_FILE, encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _active_block_tokens():
+    """Токены текущего 5-часового блока по данным ccusage."""
+    blocks = _run_ccusage(["blocks"]) or {}
+    active = next((b for b in blocks.get("blocks", []) if b.get("isActive")), None)
+    return int(active.get("totalTokens", 0)) if active else 0
+
+
+def _week_tokens():
+    daily = _run_ccusage(["daily"]) or {}
+    week_ago = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+    return int(sum(d.get("totalTokens", 0) for d in daily.get("daily", [])
+                   if d.get("period", "") >= week_ago))
+
+
+def calibrate(kind, observed_pct):
+    """Вычислить реальный лимит по проценту, который показывает Claude.
+    kind: 'block' или 'week'."""
+    if not 0 < observed_pct <= 100:
+        print("Процент должен быть в диапазоне 1..100")
+        return
+    tokens = _active_block_tokens() if kind == "block" else _week_tokens()
+    if tokens <= 0:
+        print("Нет данных ccusage для калибровки "
+              "(нет активного блока или пустая статистика)")
+        return
+    limit = int(tokens / (observed_pct / 100.0))
+    calib = _load_calibration()
+    calib[f"{kind}_token_limit"] = limit
+    with open(CALIB_FILE, "w", encoding="utf-8") as f:
+        json.dump(calib, f, indent=2)
+    print(f"Откалибровано: {kind} = {tokens:,} токенов при {observed_pct}% "
+          f"→ лимит {limit:,} токенов. Сохранено в {CALIB_FILE}")
 
 
 def _read_windows_credential(target):
@@ -193,10 +236,14 @@ def _collect():
     done_tokens = [b.get("totalTokens", 0) for b in block_list
                    if not b.get("isActive") and not b.get("isGap")]
     limit = max(done_tokens) if done_tokens else 0
+    calib = _load_calibration()
     if "block_pct" not in out:
         if active:
             tok = active.get("totalTokens", 0)
-            out["block_pct"] = min(100, round(tok * 100 / limit)) if limit else 0
+            # откалиброванный лимит точнее эвристики "максимум за историю"
+            block_limit = calib.get("block_token_limit") or limit
+            out["block_pct"] = (min(100, round(tok * 100 / block_limit))
+                                if block_limit else 0)
         else:
             out["block_pct"] = 0
     if "reset_min" not in out:
@@ -219,9 +266,14 @@ def _collect():
 
     if "week_pct" not in out:
         week_ago = datetime.now() - timedelta(days=7)
-        week_cost = sum(float(d.get("totalCost", 0.0)) for d in days
-                        if d.get("period", "") >= week_ago.strftime("%Y-%m-%d"))
-        out["week_pct"] = min(100, round(week_cost * 100 / WEEKLY_COST_LIMIT_USD))
+        recent = [d for d in days if d.get("period", "") >= week_ago.strftime("%Y-%m-%d")]
+        week_limit = calib.get("week_token_limit")
+        if week_limit:
+            week_tokens = sum(d.get("totalTokens", 0) for d in recent)
+            out["week_pct"] = min(100, round(week_tokens * 100 / week_limit))
+        else:
+            week_cost = sum(float(d.get("totalCost", 0.0)) for d in recent)
+            out["week_pct"] = min(100, round(week_cost * 100 / WEEKLY_COST_LIMIT_USD))
 
     out["ok"] = bool(block_list or days)
     return out
@@ -258,6 +310,17 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    import sys
+
+    # Калибровка: python token_agent.py --calibrate 22 [--week 41]
+    if "--calibrate" in sys.argv:
+        i = sys.argv.index("--calibrate")
+        calibrate("block", float(sys.argv[i + 1]))
+        if "--week" in sys.argv:
+            j = sys.argv.index("--week")
+            calibrate("week", float(sys.argv[j + 1]))
+        raise SystemExit
+
     threading.Thread(target=_refresher, daemon=True).start()
     srv = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     print(f"Token Monitor agent: http://0.0.0.0:{PORT}/stats "
