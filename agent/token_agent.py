@@ -24,6 +24,13 @@ CALIB_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 # только для полосы "Week %" внизу экрана).
 WEEKLY_COST_LIMIT_USD = float(os.environ.get("TM_WEEK_LIMIT_USD", "140"))
 
+# Координаты для погоды и рассвета/заката (по умолчанию Москва).
+LAT = float(os.environ.get("TM_LAT", "55.75"))
+LON = float(os.environ.get("TM_LON", "37.62"))
+
+# Считаем ассистента "работающим", если в логах есть запись за последние N секунд
+BUSY_WINDOW_SEC = 90
+
 _lock = threading.Lock()
 _stats = {
     "block_pct": 0,
@@ -31,8 +38,55 @@ _stats = {
     "cost_today_usd": 0.0,
     "reset_min": 0,
     "week_pct": 0,
+    "week_reset_min": 0,
+    "temp_c": 0.0,
+    "sunrise": "--:--",
+    "sunset": "--:--",
+    "busy": False,
     "ok": False,
 }
+_weather = {"ts": 0.0, "data": {}}
+
+
+def _fetch_weather():
+    """Температура и рассвет/закат с open-meteo (без ключа), кэш на 15 минут."""
+    if time.time() - _weather["ts"] < 900 and _weather["data"]:
+        return _weather["data"]
+    url = (f"https://api.open-meteo.com/v1/forecast?latitude={LAT}&longitude={LON}"
+           "&current=temperature_2m&daily=sunrise,sunset&timezone=auto"
+           "&forecast_days=1")
+    try:
+        with urllib.request.urlopen(url, timeout=10) as r:
+            d = json.load(r)
+        out = {
+            "temp_c": round(float(d["current"]["temperature_2m"]), 1),
+            "sunrise": d["daily"]["sunrise"][0][11:16],
+            "sunset": d["daily"]["sunset"][0][11:16],
+        }
+        _weather.update(ts=time.time(), data=out)
+        return out
+    except Exception as e:
+        print(f"[weather] failed: {e}")
+        return _weather["data"]
+
+
+def _claude_busy():
+    """Есть ли активность Claude Code прямо сейчас — по времени изменения
+    файлов сессий в ~/.claude/projects."""
+    root = os.path.expanduser("~/.claude/projects")
+    newest = 0.0
+    try:
+        for dirpath, _dirs, files in os.walk(root):
+            for name in files:
+                if name.endswith(".jsonl"):
+                    try:
+                        newest = max(newest, os.path.getmtime(
+                            os.path.join(dirpath, name)))
+                    except OSError:
+                        pass
+    except OSError:
+        return False
+    return (time.time() - newest) < BUSY_WINDOW_SEC
 
 
 def _load_calibration():
@@ -163,7 +217,9 @@ def _fetch_api_usage():
     """Точные квоты с официального эндпоинта Anthropic (как в /usage
     самого Claude Code). Возвращает dict или None при любой проблеме."""
     tok = _get_claude_token()
-    if not tok:
+    # эндпоинт принимает только OAuth-токены подписки; с ключами вида
+    # sk-ant-api... он всё равно ответит 401, поэтому не тратим время
+    if not tok or not tok.startswith("sk-ant-oat"):
         return None
     req = urllib.request.Request(
         "https://api.anthropic.com/api/oauth/usage",
@@ -275,6 +331,26 @@ def _collect():
             week_cost = sum(float(d.get("totalCost", 0.0)) for d in recent)
             out["week_pct"] = min(100, round(week_cost * 100 / WEEKLY_COST_LIMIT_USD))
 
+    # недельный сброс: по дню/времени из calibration.json, иначе скользящие 7 дней
+    if "week_reset_min" not in out:
+        wd = calib.get("week_reset_weekday")   # 0=понедельник ... 6=воскресенье
+        wh = calib.get("week_reset_hour", 0)
+        if wd is not None:
+            local = datetime.now()
+            days_ahead = (wd - local.weekday()) % 7
+            nxt = (local + timedelta(days=days_ahead)).replace(
+                hour=int(wh), minute=0, second=0, microsecond=0)
+            if nxt <= local:
+                nxt += timedelta(days=7)
+            out["week_reset_min"] = int((nxt - local).total_seconds() // 60)
+        else:
+            out["week_reset_min"] = 0
+
+    out.update(_fetch_weather())
+    out["busy"] = _claude_busy()
+    local = datetime.now()
+    out["time"] = local.strftime("%H:%M")
+    out["date"] = local.strftime("%a %d %b")
     out["ok"] = bool(block_list or days)
     return out
 

@@ -40,9 +40,23 @@ static void wifi_event_handler(void *arg, esp_event_base_t base,
 
 /* Fetch AGENT_URL and push parsed values into the UI.
    Returns true on success. */
+static void json_str(cJSON *root, const char *key, char *dst, size_t n)
+{
+    cJSON *it = cJSON_GetObjectItem(root, key);
+    if (cJSON_IsString(it) && it->valuestring) {
+        strlcpy(dst, it->valuestring, n);
+    }
+}
+
+static double json_num(cJSON *root, const char *key, double dflt)
+{
+    cJSON *it = cJSON_GetObjectItem(root, key);
+    return cJSON_IsNumber(it) ? it->valuedouble : dflt;
+}
+
 static bool poll_agent(void)
 {
-    char buf[512];
+    char buf[768];
     bool ok = false;
 
     esp_http_client_config_t cfg = {
@@ -60,26 +74,27 @@ static bool poll_agent(void)
         if (len > 0 && esp_http_client_get_status_code(cl) == 200) {
             buf[len] = '\0';
             cJSON *root = cJSON_Parse(buf);
-            if (root) {
-                cJSON *pct    = cJSON_GetObjectItem(root, "block_pct");
-                cJSON *tok    = cJSON_GetObjectItem(root, "tokens_today");
-                cJSON *cost   = cJSON_GetObjectItem(root, "cost_today_usd");
-                cJSON *reset  = cJSON_GetObjectItem(root, "reset_min");
-                cJSON *week   = cJSON_GetObjectItem(root, "week_pct");
-                if (cJSON_IsNumber(pct) && cJSON_IsNumber(tok) &&
-                    cJSON_IsNumber(cost) && cJSON_IsNumber(reset) &&
-                    cJSON_IsNumber(week)) {
-                    bsp_display_lock(0);
-                    token_ui_set_live(pct->valueint,
-                                      (long)tok->valuedouble,
-                                      cost->valuedouble,
-                                      reset->valueint,
-                                      week->valueint);
-                    bsp_display_unlock();
-                    ok = true;
-                }
-                cJSON_Delete(root);
+            if (root && cJSON_IsNumber(cJSON_GetObjectItem(root, "block_pct"))) {
+                token_data_t d = {0};
+                d.block_pct      = (int)json_num(root, "block_pct", 0);
+                d.reset_min      = (int)json_num(root, "reset_min", 0);
+                d.week_pct       = (int)json_num(root, "week_pct", 0);
+                d.week_reset_min = (int)json_num(root, "week_reset_min", 0);
+                d.tokens_today   = (long)json_num(root, "tokens_today", 0);
+                d.cost_usd       = json_num(root, "cost_today_usd", 0);
+                d.temp_c         = json_num(root, "temp_c", 0);
+                d.busy = cJSON_IsTrue(cJSON_GetObjectItem(root, "busy"));
+                json_str(root, "sunrise", d.sunrise, sizeof(d.sunrise));
+                json_str(root, "sunset", d.sunset, sizeof(d.sunset));
+                json_str(root, "time", d.time, sizeof(d.time));
+                json_str(root, "date", d.date, sizeof(d.date));
+
+                bsp_display_lock(0);
+                token_ui_set_live(&d);
+                bsp_display_unlock();
+                ok = true;
             }
+            cJSON_Delete(root);
         }
         esp_http_client_close(cl);
     }

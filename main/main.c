@@ -10,6 +10,7 @@
 #include "bsp/display.h"
 #include "ui.h"
 #include "net.h"
+#include "battery.h"
 
 #define BOARD_I2C_SDA GPIO_NUM_15
 #define BOARD_I2C_SCL GPIO_NUM_7
@@ -71,5 +72,6 @@ void app_main(void)
     token_ui_create();
     bsp_display_unlock();
 
+    battery_start();
     net_start();
 }
