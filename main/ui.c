@@ -35,6 +35,9 @@ static lv_obj_t *lbl_cost;
 static lv_obj_t *lbl_reset;
 static lv_obj_t *bar_week;
 static lv_obj_t *lbl_week;
+static lv_obj_t *lbl_mode;
+static lv_timer_t *demo_timer;
+static bool demo_paused;
 
 static void fmt_tokens(char *buf, size_t n, long tokens)
 {
@@ -80,6 +83,22 @@ static void demo_tick(lv_timer_t *timer)
     refresh_widgets();
 }
 
+/* Tap anywhere: pause/resume the demo feed — simple touch check */
+static void on_screen_click(lv_event_t *e)
+{
+    (void)e;
+    demo_paused = !demo_paused;
+    if (demo_paused) {
+        lv_timer_pause(demo_timer);
+        lv_label_set_text(lbl_mode, LV_SYMBOL_PAUSE "  PAUSED");
+        lv_obj_set_style_text_color(lbl_mode, lv_color_hex(COL_MUTED), 0);
+    } else {
+        lv_timer_resume(demo_timer);
+        lv_label_set_text(lbl_mode, LV_SYMBOL_REFRESH "  DEMO");
+        lv_obj_set_style_text_color(lbl_mode, lv_color_hex(COL_ACCENT), 0);
+    }
+}
+
 static lv_obj_t *make_tile(lv_obj_t *parent, int x, int w, const char *title,
                            lv_obj_t **value_lbl, lv_color_t value_col)
 {
@@ -121,11 +140,14 @@ void token_ui_create(void)
     lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
     lv_obj_align(title, LV_ALIGN_TOP_LEFT, 16, 14);
 
-    lv_obj_t *mode = lv_label_create(scr);
-    lv_label_set_text(mode, LV_SYMBOL_REFRESH "  DEMO");
-    lv_obj_set_style_text_color(mode, lv_color_hex(COL_ACCENT), 0);
-    lv_obj_set_style_text_font(mode, &lv_font_montserrat_16, 0);
-    lv_obj_align(mode, LV_ALIGN_TOP_RIGHT, -16, 16);
+    lbl_mode = lv_label_create(scr);
+    lv_label_set_text(lbl_mode, LV_SYMBOL_REFRESH "  DEMO");
+    lv_obj_set_style_text_color(lbl_mode, lv_color_hex(COL_ACCENT), 0);
+    lv_obj_set_style_text_font(lbl_mode, &lv_font_montserrat_16, 0);
+    lv_obj_align(lbl_mode, LV_ALIGN_TOP_RIGHT, -16, 16);
+
+    lv_obj_add_flag(scr, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(scr, on_screen_click, LV_EVENT_CLICKED, NULL);
 
     /* 5h-block usage arc */
     arc_block = lv_arc_create(scr);
@@ -175,5 +197,5 @@ void token_ui_create(void)
 
     refresh_widgets();
 
-    lv_timer_create(demo_tick, 1000, NULL);
+    demo_timer = lv_timer_create(demo_tick, 1000, NULL);
 }
