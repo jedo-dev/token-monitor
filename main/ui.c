@@ -38,6 +38,7 @@ static lv_obj_t *lbl_week;
 static lv_obj_t *lbl_mode;
 static lv_timer_t *demo_timer;
 static bool demo_paused;
+static bool is_live;
 
 static void fmt_tokens(char *buf, size_t n, long tokens)
 {
@@ -83,10 +84,47 @@ static void demo_tick(lv_timer_t *timer)
     refresh_widgets();
 }
 
-/* Tap anywhere: pause/resume the demo feed — simple touch check */
+void token_ui_set_live(int block_pct, long tokens_today, double cost_usd,
+                       int reset_min, int week_pct)
+{
+    char buf[32];
+
+    if (!is_live) {
+        is_live = true;
+        lv_timer_pause(demo_timer);
+    }
+    lv_label_set_text(lbl_mode, LV_SYMBOL_WIFI "  LIVE");
+    lv_obj_set_style_text_color(lbl_mode, lv_color_hex(COL_GREEN), 0);
+
+    lv_arc_set_value(arc_block, block_pct);
+    lv_label_set_text_fmt(lbl_pct, "%d%%", block_pct);
+
+    fmt_tokens(buf, sizeof(buf), tokens_today);
+    lv_label_set_text(lbl_tokens, buf);
+
+    snprintf(buf, sizeof(buf), "$%.2f", cost_usd);
+    lv_label_set_text(lbl_cost, buf);
+
+    lv_label_set_text_fmt(lbl_reset, "%d:%02d", reset_min / 60, reset_min % 60);
+
+    lv_bar_set_value(bar_week, week_pct, LV_ANIM_ON);
+    lv_label_set_text_fmt(lbl_week, "Week  %d%%", week_pct);
+}
+
+void token_ui_set_offline(void)
+{
+    lv_label_set_text(lbl_mode, LV_SYMBOL_WARNING "  OFFLINE");
+    lv_obj_set_style_text_color(lbl_mode, lv_color_hex(0xF85149), 0);
+}
+
+/* Tap anywhere: pause/resume the demo feed — simple touch check.
+   Ignored once live data is flowing. */
 static void on_screen_click(lv_event_t *e)
 {
     (void)e;
+    if (is_live) {
+        return;
+    }
     demo_paused = !demo_paused;
     if (demo_paused) {
         lv_timer_pause(demo_timer);

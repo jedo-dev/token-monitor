@@ -9,6 +9,7 @@
 #include "bsp/esp-bsp.h"
 #include "bsp/display.h"
 #include "ui.h"
+#include "net.h"
 
 #define BOARD_I2C_SDA GPIO_NUM_15
 #define BOARD_I2C_SCL GPIO_NUM_7
@@ -69,4 +70,6 @@ void app_main(void)
     bsp_display_lock(0);
     token_ui_create();
     bsp_display_unlock();
+
+    net_start();
 }
