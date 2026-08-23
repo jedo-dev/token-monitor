@@ -3,5 +3,6 @@ dependencies:
   waveshare/esp32_s3_touch_lcd_4:
     version: "3.0.0"
   lvgl/lvgl:
-    version: "9.5.0"
+    version: "*"
+    override_path: "D:/esp/lvgl"
     public: true
