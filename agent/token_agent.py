@@ -12,6 +12,7 @@ import os
 import subprocess
 import threading
 import time
+import urllib.request
 from datetime import datetime, timezone, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -30,6 +31,121 @@ _stats = {
     "week_pct": 0,
     "ok": False,
 }
+
+
+def _read_windows_credential(target):
+    """Прочитать generic-credential из Windows Credential Manager.
+    Токен не логируется и не покидает этот процесс."""
+    import ctypes
+    import ctypes.wintypes as wt
+
+    class CREDENTIAL(ctypes.Structure):
+        _fields_ = [
+            ("Flags", wt.DWORD), ("Type", wt.DWORD),
+            ("TargetName", wt.LPWSTR), ("Comment", wt.LPWSTR),
+            ("LastWritten", wt.FILETIME),
+            ("CredentialBlobSize", wt.DWORD),
+            ("CredentialBlob", ctypes.POINTER(ctypes.c_byte)),
+            ("Persist", wt.DWORD), ("AttributeCount", wt.DWORD),
+            ("Attributes", ctypes.c_void_p),
+            ("TargetAlias", wt.LPWSTR), ("UserName", wt.LPWSTR),
+        ]
+
+    adv = ctypes.windll.advapi32
+    pcred = ctypes.POINTER(CREDENTIAL)()
+    if not adv.CredReadW(target, 1, 0, ctypes.byref(pcred)):  # 1 = GENERIC
+        return None
+    try:
+        raw = ctypes.string_at(pcred.contents.CredentialBlob,
+                               pcred.contents.CredentialBlobSize)
+    finally:
+        adv.CredFree(pcred)
+    for enc in ("utf-8", "utf-16-le"):
+        try:
+            return raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return None
+
+
+def _get_claude_token():
+    """Найти OAuth-токен Claude Code: сначала файл (macOS/Linux),
+    затем Windows Credential Manager."""
+    path = os.path.expanduser("~/.claude/.credentials.json")
+    try:
+        blob = json.load(open(path, encoding="utf-8"))
+        tok = blob.get("claudeAiOauth", {}).get("accessToken")
+        if tok:
+            return tok
+    except (OSError, ValueError):
+        pass
+
+    if os.name == "nt":
+        for target in ("Claude Code-credentials", "Claude Code", "claude"):
+            try:
+                blob = _read_windows_credential(target)
+            except Exception:
+                blob = None
+            if not blob:
+                continue
+            try:
+                tok = json.loads(blob).get("claudeAiOauth", {}).get("accessToken")
+                if tok:
+                    return tok
+            except ValueError:
+                continue
+    return None
+
+
+def _pct(v):
+    """Utilization может прийти как 0..1 или 0..100 — нормализуем в %."""
+    if v is None:
+        return None
+    v = float(v)
+    if 0 < v <= 1.0 and v != int(v):
+        v *= 100
+    return min(100, round(v))
+
+
+def _fetch_api_usage():
+    """Точные квоты с официального эндпоинта Anthropic (как в /usage
+    самого Claude Code). Возвращает dict или None при любой проблеме."""
+    tok = _get_claude_token()
+    if not tok:
+        return None
+    req = urllib.request.Request(
+        "https://api.anthropic.com/api/oauth/usage",
+        headers={
+            "Authorization": "Bearer " + tok,
+            "anthropic-beta": "oauth-2025-04-20",
+            "Content-Type": "application/json",
+        })
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            d = json.load(r)
+    except Exception as e:
+        print(f"[api] usage endpoint failed: {e}")
+        return None
+
+    out = {}
+    five = d.get("five_hour") or {}
+    week = d.get("seven_day") or {}
+    p = _pct(five.get("utilization"))
+    if p is not None:
+        out["block_pct"] = p
+    if five.get("resets_at"):
+        try:
+            end = _parse_iso(five["resets_at"])
+            out["reset_min"] = max(0, int(
+                (end - datetime.now(timezone.utc)).total_seconds() // 60))
+        except ValueError:
+            pass
+    p = _pct(week.get("utilization"))
+    if p is not None:
+        out["week_pct"] = p
+    print(f"[api] five_hour={out.get('block_pct')}% "
+          f"seven_day={out.get('week_pct')}% reset_min={out.get('reset_min')}")
+    return out or None
 
 
 def _run_ccusage(args):
@@ -55,7 +171,11 @@ def _collect():
     now = datetime.now(timezone.utc)
     out = {}
 
-    # --- 5-часовой блок ---
+    # --- точные квоты из API Anthropic (как в /usage Claude Code) ---
+    api = _fetch_api_usage() or {}
+    out.update(api)
+
+    # --- 5-часовой блок (эвристика ccusage — только если API недоступен) ---
     blocks = _run_ccusage(["blocks"]) or {}
     block_list = blocks.get("blocks", [])
     active = next((b for b in block_list if b.get("isActive")), None)
@@ -64,17 +184,21 @@ def _collect():
     done_tokens = [b.get("totalTokens", 0) for b in block_list
                    if not b.get("isActive") and not b.get("isGap")]
     limit = max(done_tokens) if done_tokens else 0
-    if active:
-        tok = active.get("totalTokens", 0)
-        out["block_pct"] = min(100, round(tok * 100 / limit)) if limit else 0
-        try:
-            end = _parse_iso(active["endTime"])
-            out["reset_min"] = max(0, int((end - now).total_seconds() // 60))
-        except (KeyError, ValueError):
+    if "block_pct" not in out:
+        if active:
+            tok = active.get("totalTokens", 0)
+            out["block_pct"] = min(100, round(tok * 100 / limit)) if limit else 0
+        else:
+            out["block_pct"] = 0
+    if "reset_min" not in out:
+        if active:
+            try:
+                end = _parse_iso(active["endTime"])
+                out["reset_min"] = max(0, int((end - now).total_seconds() // 60))
+            except (KeyError, ValueError):
+                out["reset_min"] = 0
+        else:
             out["reset_min"] = 0
-    else:
-        out["block_pct"] = 0
-        out["reset_min"] = 0
 
     # --- за день и за неделю ---
     daily = _run_ccusage(["daily"]) or {}
@@ -84,10 +208,11 @@ def _collect():
     out["tokens_today"] = int(today.get("totalTokens", 0)) if today else 0
     out["cost_today_usd"] = round(float(today.get("totalCost", 0.0)), 2) if today else 0.0
 
-    week_ago = datetime.now() - timedelta(days=7)
-    week_cost = sum(float(d.get("totalCost", 0.0)) for d in days
-                    if d.get("period", "") >= week_ago.strftime("%Y-%m-%d"))
-    out["week_pct"] = min(100, round(week_cost * 100 / WEEKLY_COST_LIMIT_USD))
+    if "week_pct" not in out:
+        week_ago = datetime.now() - timedelta(days=7)
+        week_cost = sum(float(d.get("totalCost", 0.0)) for d in days
+                        if d.get("period", "") >= week_ago.strftime("%Y-%m-%d"))
+        out["week_pct"] = min(100, round(week_cost * 100 / WEEKLY_COST_LIMIT_USD))
 
     out["ok"] = bool(block_list or days)
     return out
