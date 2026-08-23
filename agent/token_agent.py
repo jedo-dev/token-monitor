@@ -69,8 +69,17 @@ def _read_windows_credential(target):
 
 
 def _get_claude_token():
-    """Найти OAuth-токен Claude Code: сначала файл (macOS/Linux),
+    """Найти OAuth-токен Claude Code: файл .token рядом с агентом
+    (созданный через `claude setup-token`), затем .credentials.json,
     затем Windows Credential Manager."""
+    tok_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".token")
+    try:
+        tok = open(tok_file, encoding="utf-8").read().strip()
+        if tok:
+            return tok
+    except OSError:
+        pass
+
     path = os.path.expanduser("~/.claude/.credentials.json")
     try:
         blob = json.load(open(path, encoding="utf-8"))
