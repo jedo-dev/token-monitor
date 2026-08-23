@@ -275,7 +275,7 @@ def _parse_iso(s):
     return datetime.fromisoformat(s.replace("Z", "+00:00"))
 
 
-def _collect():
+def _collect(include_weather=True):
     now = datetime.now(timezone.utc)
     out = {}
 
@@ -356,7 +356,8 @@ def _collect():
         })
     out["history"] = hist
 
-    out.update(_fetch_weather())
+    if include_weather:
+        out.update(_fetch_weather())
     out["busy"] = _claude_busy()
     local = datetime.now()
     out["time"] = local.strftime("%H:%M")

@@ -1,0 +1,17 @@
+[Unit]
+Description=Token Monitor broker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/opt/token-monitor/agent
+ExecStart=/usr/bin/python3 /opt/token-monitor/agent/token_broker.py
+Environment=TM_LAT=55.75
+Environment=TM_LON=37.62
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
