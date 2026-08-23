@@ -16,6 +16,11 @@ typedef struct {
     char  time[8];
     char  date[16];
     bool  busy;
+
+    /* last N days, oldest first */
+    int   hist_len;
+    long  hist_tokens[7];
+    char  hist_label[7][8];
 } token_data_t;
 
 /* Build the Token Monitor screen. Call with the LVGL display lock held. */
@@ -29,3 +34,12 @@ void token_ui_set_offline(void);
 
 /* Battery level in percent, or -1 if unknown. */
 void token_ui_set_battery(int pct);
+
+/* Settings persisted in NVS and editable on the Settings page. */
+typedef struct {
+    int  brightness;      /* 10..100 % */
+    bool night_dim;       /* dim the panel at night */
+    bool sound_alert;     /* warn when a quota crosses 90% */
+} token_settings_t;
+
+const token_settings_t *token_ui_settings(void);

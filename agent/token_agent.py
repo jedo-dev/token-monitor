@@ -346,6 +346,16 @@ def _collect():
         else:
             out["week_reset_min"] = 0
 
+    # история за последние 7 дней для графика на плате
+    hist = []
+    for d in days[-7:]:
+        hist.append({
+            "d": (d.get("period") or "")[5:],           # MM-DD
+            "t": int(d.get("totalTokens", 0)),
+            "c": round(float(d.get("totalCost", 0.0)), 2),
+        })
+    out["history"] = hist
+
     out.update(_fetch_weather())
     out["busy"] = _claude_busy()
     local = datetime.now()

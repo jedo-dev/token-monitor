@@ -56,7 +56,7 @@ static double json_num(cJSON *root, const char *key, double dflt)
 
 static bool poll_agent(void)
 {
-    char buf[768];
+    char buf[1536];   /* stats + 7 days of history */
     bool ok = false;
 
     esp_http_client_config_t cfg = {
@@ -88,6 +88,20 @@ static bool poll_agent(void)
                 json_str(root, "sunset", d.sunset, sizeof(d.sunset));
                 json_str(root, "time", d.time, sizeof(d.time));
                 json_str(root, "date", d.date, sizeof(d.date));
+
+                cJSON *hist = cJSON_GetObjectItem(root, "history");
+                if (cJSON_IsArray(hist)) {
+                    int n = cJSON_GetArraySize(hist);
+                    int skip = n > 7 ? n - 7 : 0;   /* keep the newest 7 */
+                    for (int i = skip; i < n; i++) {
+                        cJSON *day = cJSON_GetArrayItem(hist, i);
+                        int k = d.hist_len;
+                        d.hist_tokens[k] = (long)json_num(day, "t", 0);
+                        json_str(day, "d", d.hist_label[k],
+                                 sizeof(d.hist_label[k]));
+                        d.hist_len++;
+                    }
+                }
 
                 bsp_display_lock(0);
                 token_ui_set_live(&d);
