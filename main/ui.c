@@ -477,7 +477,8 @@ static void mail_page_create(lv_obj_t *parent)
     lv_obj_set_style_bg_opa(mail_tabs, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(mail_tabs, 0, 0);
     lv_obj_set_style_pad_all(mail_tabs, 0, 0);
-    lv_obj_remove_flag(mail_tabs, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(mail_tabs, LV_DIR_HOR);   /* вкладок может быть много */
+    lv_obj_set_scrollbar_mode(mail_tabs, LV_SCROLLBAR_MODE_OFF);
 
     mail_list = lv_obj_create(parent);
     lv_obj_set_pos(mail_list, 12, 34);

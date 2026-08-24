@@ -49,8 +49,8 @@ void token_ui_set_battery(int pct);
 
 /* ---------------- mail ---------------- */
 
-#define MAIL_MAX_BOXES 3
-#define MAIL_MAX_ITEMS 12
+#define MAIL_MAX_BOXES 6
+#define MAIL_MAX_ITEMS 10
 
 typedef struct {
     char uid[16];

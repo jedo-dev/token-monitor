@@ -57,7 +57,7 @@ static double json_num(cJSON *root, const char *key, double dflt)
 
 /* Response can carry several mailboxes worth of envelopes, so it goes to
    the heap (PSRAM) rather than the task stack. */
-#define RESP_MAX 24576
+#define RESP_MAX 49152   /* с запасом: живёт в PSRAM, не на стеке задачи */
 
 static void parse_mail(cJSON *root)
 {
@@ -114,7 +114,7 @@ static bool poll_agent(void)
 
     esp_http_client_config_t cfg = {
         .url = AGENT_URL,
-        .timeout_ms = 2500,
+        .timeout_ms = 8000,
     };
     esp_http_client_handle_t cl = esp_http_client_init(&cfg);
     if (!cl) {
