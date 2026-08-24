@@ -41,17 +41,7 @@ typedef struct {
 } gauge_t;
 static gauge_t g_session, g_week;
 
-/* Page 2 tiles */
-static lv_obj_t *lbl_tokens;
-static lv_obj_t *lbl_cost;
-
-/* Page 3: history chart */
-static lv_obj_t *chart;
-static lv_chart_series_t *chart_ser;
-static lv_obj_t *chart_scale;
-static lv_obj_t *lbl_chart_max;
-
-/* Page 4: polza.ai */
+/* Page 2: polza.ai */
 static lv_obj_t *lbl_pz_balance;
 static lv_obj_t *lbl_pz_today;
 static lv_obj_t *lbl_pz_reqs;
@@ -61,12 +51,12 @@ static lv_chart_series_t *pz_ser;
 static lv_obj_t *lbl_pz_days;
 static lv_obj_t *lbl_pz_max;
 
-/* Page 5: settings */
+/* Page 3: settings */
 static lv_obj_t *sl_bright;
 static lv_obj_t *lbl_bright;
 
 /* Footer */
-#define PAGE_COUNT 5
+#define PAGE_COUNT 3
 static lv_obj_t *dots[PAGE_COUNT];
 static lv_obj_t *lbl_activity;
 static lv_obj_t *tv;
@@ -174,33 +164,6 @@ static void gauge_create(gauge_t *g, lv_obj_t *parent, int y, const char *chip_t
     lv_obj_align(g->reset, LV_ALIGN_TOP_LEFT, 0, 66);
 }
 
-static lv_obj_t *stat_tile(lv_obj_t *parent, int x, int y, int w, int h,
-                           const char *caption, lv_obj_t **value,
-                           lv_color_t value_col)
-{
-    lv_obj_t *tile = lv_obj_create(parent);
-    lv_obj_set_pos(tile, x, y);
-    lv_obj_set_size(tile, w, h);
-    lv_obj_set_style_bg_color(tile, lv_color_hex(COL_CARD), 0);
-    lv_obj_set_style_border_color(tile, lv_color_hex(COL_BORDER), 0);
-    lv_obj_set_style_border_width(tile, 1, 0);
-    lv_obj_set_style_radius(tile, 12, 0);
-    lv_obj_set_style_pad_all(tile, 10, 0);
-    lv_obj_remove_flag(tile, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_obj_t *cap = lv_label_create(tile);
-    lv_label_set_text(cap, caption);
-    lv_obj_set_style_text_color(cap, lv_color_hex(COL_MUTED), 0);
-    lv_obj_set_style_text_font(cap, &lv_font_montserrat_12, 0);
-    lv_obj_align(cap, LV_ALIGN_TOP_MID, 0, 0);
-
-    *value = lv_label_create(tile);
-    lv_label_set_text(*value, "--");
-    lv_obj_set_style_text_color(*value, value_col, 0);
-    lv_obj_set_style_text_font(*value, &lv_font_montserrat_26, 0);
-    lv_obj_align(*value, LV_ALIGN_CENTER, 0, 6);
-    return tile;
-}
 
 static void on_page_change(lv_event_t *e)
 {
@@ -215,85 +178,7 @@ static void on_page_change(lv_event_t *e)
     }
 }
 
-/* ---------- page 3: history chart ---------- */
-
-static void history_page_create(lv_obj_t *parent)
-{
-    lv_obj_t *card = lv_obj_create(parent);
-    lv_obj_set_pos(card, 12, 6);
-    lv_obj_set_size(card, SCR_W - 24, 220);
-    lv_obj_set_style_bg_color(card, lv_color_hex(COL_CARD), 0);
-    lv_obj_set_style_border_color(card, lv_color_hex(COL_BORDER), 0);
-    lv_obj_set_style_border_width(card, 1, 0);
-    lv_obj_set_style_radius(card, 12, 0);
-    lv_obj_set_style_pad_all(card, 10, 0);
-    lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_obj_t *cap = lv_label_create(card);
-    lv_label_set_text(cap, "TOKENS PER DAY");
-    lv_obj_set_style_text_font(cap, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_color(cap, lv_color_hex(COL_MUTED), 0);
-    lv_obj_align(cap, LV_ALIGN_TOP_LEFT, 0, 0);
-
-    lbl_chart_max = lv_label_create(card);
-    lv_label_set_text(lbl_chart_max, "");
-    lv_obj_set_style_text_font(lbl_chart_max, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_color(lbl_chart_max, lv_color_hex(COL_MUTED), 0);
-    lv_obj_align(lbl_chart_max, LV_ALIGN_TOP_RIGHT, 0, 0);
-
-    chart = lv_chart_create(card);
-    lv_obj_set_size(chart, SCR_W - 60, 140);
-    lv_obj_align(chart, LV_ALIGN_TOP_MID, 0, 24);
-    lv_chart_set_type(chart, LV_CHART_TYPE_BAR);
-    lv_chart_set_point_count(chart, 7);
-    lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, 0, 100);
-    lv_chart_set_div_line_count(chart, 4, 0);
-    lv_obj_set_style_bg_opa(chart, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(chart, 0, 0);
-    lv_obj_set_style_line_color(chart, lv_color_hex(COL_BORDER), LV_PART_MAIN);
-    lv_obj_set_style_pad_column(chart, 8, LV_PART_MAIN);
-    lv_obj_set_style_radius(chart, 3, LV_PART_ITEMS);
-    chart_ser = lv_chart_add_series(chart, lv_color_hex(COL_ACCENT),
-                                    LV_CHART_AXIS_PRIMARY_Y);
-
-    chart_scale = lv_label_create(card);
-    lv_label_set_text(chart_scale, "");
-    lv_obj_set_style_text_font(chart_scale, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_color(chart_scale, lv_color_hex(COL_MUTED), 0);
-    lv_obj_align(chart_scale, LV_ALIGN_BOTTOM_MID, 0, 4);
-}
-
-static void history_update(const token_data_t *d)
-{
-    if (!chart || d->hist_len <= 0) {
-        return;
-    }
-    long max = 1;
-    for (int i = 0; i < d->hist_len; i++) {
-        if (d->hist_tokens[i] > max) max = d->hist_tokens[i];
-    }
-
-    lv_chart_set_point_count(chart, d->hist_len);
-    for (int i = 0; i < d->hist_len; i++) {
-        lv_chart_set_value_by_id(chart, chart_ser, i,
-                                 (int32_t)(d->hist_tokens[i] * 100 / max));
-    }
-    lv_chart_refresh(chart);
-
-    char buf[16];
-    fmt_tokens(buf, sizeof(buf), max);
-    lv_label_set_text_fmt(lbl_chart_max, "max %s", buf);
-
-    /* day labels under the bars */
-    char line[96] = "";
-    for (int i = 0; i < d->hist_len; i++) {
-        strlcat(line, d->hist_label[i], sizeof(line));
-        if (i + 1 < d->hist_len) strlcat(line, "  ", sizeof(line));
-    }
-    lv_label_set_text(chart_scale, line);
-}
-
-/* ---------- page 4: polza.ai dashboard ---------- */
+/* ---------- page 2: polza.ai dashboard ---------- */
 
 static lv_obj_t *pz_tile(lv_obj_t *parent, int x, int y, int w,
                          const char *caption, lv_obj_t **value,
@@ -429,7 +314,7 @@ static void polza_update(const token_data_t *d)
     }
 }
 
-/* ---------- page 5: settings ---------- */
+/* ---------- page 3: settings ---------- */
 
 static void on_brightness(lv_event_t *e)
 {
@@ -601,25 +486,12 @@ void token_ui_create(void)
     lv_obj_t *p2 = lv_tileview_add_tile(tv, 1, 0, LV_DIR_HOR);
     lv_obj_set_style_pad_all(p2, 0, 0);
     lv_obj_remove_flag(p2, LV_OBJ_FLAG_SCROLLABLE);
-    stat_tile(p2, 12, 6, 220, 104, "TOKENS TODAY", &lbl_tokens,
-              lv_color_hex(COL_TEXT));
-    stat_tile(p2, 248, 6, 220, 104, "COST TODAY", &lbl_cost,
-              lv_color_hex(COL_GREEN));
+    polza_page_create(p2);
 
-    lv_obj_t *p3 = lv_tileview_add_tile(tv, 2, 0, LV_DIR_HOR);
+    lv_obj_t *p3 = lv_tileview_add_tile(tv, 2, 0, LV_DIR_LEFT);
     lv_obj_set_style_pad_all(p3, 0, 0);
     lv_obj_remove_flag(p3, LV_OBJ_FLAG_SCROLLABLE);
-    history_page_create(p3);
-
-    lv_obj_t *p4 = lv_tileview_add_tile(tv, 3, 0, LV_DIR_HOR);
-    lv_obj_set_style_pad_all(p4, 0, 0);
-    lv_obj_remove_flag(p4, LV_OBJ_FLAG_SCROLLABLE);
-    polza_page_create(p4);
-
-    lv_obj_t *p5 = lv_tileview_add_tile(tv, 4, 0, LV_DIR_LEFT);
-    lv_obj_set_style_pad_all(p5, 0, 0);
-    lv_obj_remove_flag(p5, LV_OBJ_FLAG_SCROLLABLE);
-    settings_page_create(p5);
+    settings_page_create(p3);
 
     /* ---------- footer ---------- */
     for (int i = 0; i < PAGE_COUNT; i++) {
@@ -662,10 +534,6 @@ void token_ui_set_live(const token_data_t *d)
     gauge_set(&g_session, d->block_pct, d->reset_min);
     gauge_set(&g_week, d->week_pct, d->week_reset_min);
 
-    fmt_tokens(buf, sizeof(buf), d->tokens_today);
-    lv_label_set_text(lbl_tokens, buf);
-    lv_label_set_text_fmt(lbl_cost, "$%.2f", d->cost_usd);
-
     lv_label_set_text(lbl_clock, d->time);
     lv_label_set_text(lbl_date, d->date);
 
@@ -674,7 +542,6 @@ void token_ui_set_live(const token_data_t *d)
     lv_label_set_text(lbl_sun, buf);
     lv_label_set_text_fmt(lbl_temp, "%.1f C", d->temp_c);
 
-    history_update(d);
     polza_update(d);
 
     lv_label_set_text(lbl_activity, d->busy ? "Thinking ..." : "Idle");
