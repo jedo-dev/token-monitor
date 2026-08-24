@@ -47,6 +47,38 @@ void token_ui_set_offline(void);
 /* Battery level in percent, or -1 if unknown. */
 void token_ui_set_battery(int pct);
 
+/* ---------------- mail ---------------- */
+
+#define MAIL_MAX_BOXES 3
+#define MAIL_MAX_ITEMS 12
+
+typedef struct {
+    char uid[16];
+    char from[48];
+    char subject[104];
+    char when[12];
+    bool seen;
+} mail_item_t;
+
+typedef struct {
+    char id[32];
+    char label[32];
+    int  unread;
+    int  count;
+    mail_item_t items[MAIL_MAX_ITEMS];
+} mailbox_t;
+
+/* Refresh the mail page. Call with the LVGL display lock held. */
+void token_ui_set_mail(const mailbox_t *boxes, int count);
+
+/* Called when the user taps a message: net.c fetches the body. */
+typedef void (*mail_open_cb_t)(const char *box_id, const char *uid);
+void token_ui_set_mail_open_cb(mail_open_cb_t cb);
+
+/* Show a fetched message body (or an error when text is NULL). */
+void token_ui_show_message(const char *subject, const char *from,
+                           const char *when, const char *text);
+
 /* Settings persisted in NVS and editable on the Settings page. */
 typedef struct {
     int  brightness;      /* 10..100 % */

@@ -51,12 +51,27 @@ static lv_chart_series_t *pz_ser;
 static lv_obj_t *lbl_pz_days;
 static lv_obj_t *lbl_pz_max;
 
-/* Page 3: settings */
+/* Page 3: mail */
+static lv_obj_t *mail_tabs;
+static lv_obj_t *mail_list;
+static lv_obj_t *lbl_mail_empty;
+static mailbox_t s_boxes[MAIL_MAX_BOXES];
+static int  s_box_count;
+static int  s_box_active;
+static mail_open_cb_t s_open_cb;
+
+/* Message reader overlay */
+static lv_obj_t *reader;
+static lv_obj_t *lbl_read_subject;
+static lv_obj_t *lbl_read_meta;
+static lv_obj_t *lbl_read_body;
+
+/* Page 4: settings */
 static lv_obj_t *sl_bright;
 static lv_obj_t *lbl_bright;
 
 /* Footer */
-#define PAGE_COUNT 3
+#define PAGE_COUNT 4
 static lv_obj_t *dots[PAGE_COUNT];
 static lv_obj_t *lbl_activity;
 static lv_obj_t *tv;
@@ -314,7 +329,273 @@ static void polza_update(const token_data_t *d)
     }
 }
 
-/* ---------- page 3: settings ---------- */
+/* ---------- page 3: mail ---------- */
+
+LV_FONT_DECLARE(font_ru_12);
+LV_FONT_DECLARE(font_ru_16);
+LV_FONT_DECLARE(font_ru_20);
+
+static void mail_render_list(void);
+
+static void on_reader_close(lv_event_t *e)
+{
+    (void)e;
+    lv_obj_add_flag(reader, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void on_mail_item(lv_event_t *e)
+{
+    int idx = (int)(intptr_t)lv_event_get_user_data(e);
+    if (s_box_active >= s_box_count) {
+        return;
+    }
+    const mailbox_t *box = &s_boxes[s_box_active];
+    if (idx < 0 || idx >= box->count) {
+        return;
+    }
+
+    /* show the envelope immediately, body arrives asynchronously */
+    token_ui_show_message(box->items[idx].subject, box->items[idx].from,
+                          box->items[idx].when, NULL);
+    if (s_open_cb) {
+        s_open_cb(box->id, box->items[idx].uid);
+    }
+}
+
+static void on_mail_tab(lv_event_t *e)
+{
+    s_box_active = (int)(intptr_t)lv_event_get_user_data(e);
+    mail_render_list();
+}
+
+static void mail_render_tabs(void)
+{
+    lv_obj_clean(mail_tabs);
+    if (s_box_count <= 1) {
+        return;
+    }
+    int x = 0;
+    for (int i = 0; i < s_box_count; i++) {
+        lv_obj_t *btn = lv_button_create(mail_tabs);
+        lv_obj_set_pos(btn, x, 0);
+        lv_obj_set_height(btn, 30);
+        lv_obj_set_style_bg_color(btn, lv_color_hex(
+            i == s_box_active ? COL_ACCENT : COL_TRACK), 0);
+        lv_obj_set_style_radius(btn, 8, 0);
+        lv_obj_set_style_pad_hor(btn, 12, 0);
+        lv_obj_add_event_cb(btn, on_mail_tab, LV_EVENT_CLICKED,
+                            (void *)(intptr_t)i);
+
+        lv_obj_t *lbl = lv_label_create(btn);
+        lv_label_set_text_fmt(lbl, "%s  %d", s_boxes[i].label, s_boxes[i].unread);
+        lv_obj_set_style_text_font(lbl, &font_ru_12, 0);
+        lv_obj_set_style_text_color(lbl, lv_color_hex(COL_TEXT), 0);
+        lv_obj_center(lbl);
+
+        lv_obj_update_layout(btn);
+        x += lv_obj_get_width(btn) + 8;
+    }
+}
+
+static void mail_render_list(void)
+{
+    mail_render_tabs();
+    lv_obj_clean(mail_list);
+
+    if (s_box_count == 0 || s_boxes[s_box_active].count == 0) {
+        lv_obj_add_flag(mail_list, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_remove_flag(lbl_mail_empty, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    lv_obj_remove_flag(mail_list, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(lbl_mail_empty, LV_OBJ_FLAG_HIDDEN);
+
+    const mailbox_t *box = &s_boxes[s_box_active];
+    for (int i = 0; i < box->count; i++) {
+        const mail_item_t *m = &box->items[i];
+
+        lv_obj_t *row = lv_obj_create(mail_list);
+        lv_obj_set_width(row, lv_pct(100));
+        lv_obj_set_height(row, 62);
+        lv_obj_set_style_bg_color(row, lv_color_hex(COL_CARD), 0);
+        lv_obj_set_style_border_color(row, lv_color_hex(COL_BORDER), 0);
+        lv_obj_set_style_border_width(row, 1, 0);
+        lv_obj_set_style_radius(row, 10, 0);
+        lv_obj_set_style_pad_all(row, 8, 0);
+        lv_obj_set_style_margin_bottom(row, 6, 0);
+        lv_obj_remove_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(row, on_mail_item, LV_EVENT_CLICKED,
+                            (void *)(intptr_t)i);
+
+        if (!m->seen) {   /* unread marker */
+            lv_obj_t *dot = lv_obj_create(row);
+            lv_obj_set_size(dot, 8, 8);
+            lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
+            lv_obj_set_style_border_width(dot, 0, 0);
+            lv_obj_set_style_bg_color(dot, lv_color_hex(COL_ACCENT), 0);
+            lv_obj_align(dot, LV_ALIGN_LEFT_MID, -2, 0);
+        }
+
+        lv_obj_t *from = lv_label_create(row);
+        lv_label_set_text(from, m->from);
+        lv_obj_set_style_text_font(from, &font_ru_12, 0);
+        lv_obj_set_style_text_color(from, lv_color_hex(
+            m->seen ? COL_MUTED : COL_ACCENT), 0);
+        lv_obj_set_width(from, 320);
+        lv_label_set_long_mode(from, LV_LABEL_LONG_DOT);
+        lv_obj_align(from, LV_ALIGN_TOP_LEFT, 14, 0);
+
+        lv_obj_t *when = lv_label_create(row);
+        lv_label_set_text(when, m->when);
+        lv_obj_set_style_text_font(when, &font_ru_12, 0);
+        lv_obj_set_style_text_color(when, lv_color_hex(COL_MUTED), 0);
+        lv_obj_align(when, LV_ALIGN_TOP_RIGHT, 0, 0);
+
+        lv_obj_t *subj = lv_label_create(row);
+        lv_label_set_text(subj, m->subject);
+        lv_obj_set_style_text_font(subj, &font_ru_16, 0);
+        lv_obj_set_style_text_color(subj, lv_color_hex(
+            m->seen ? COL_TEXT : COL_TEXT), 0);
+        lv_obj_set_width(subj, 420);
+        lv_label_set_long_mode(subj, LV_LABEL_LONG_DOT);
+        lv_obj_align(subj, LV_ALIGN_BOTTOM_LEFT, 14, 0);
+    }
+}
+
+static void mail_page_create(lv_obj_t *parent)
+{
+    lv_obj_t *hdr = lv_label_create(parent);
+    lv_label_set_text(hdr, "Почта");
+    lv_obj_set_style_text_font(hdr, &font_ru_16, 0);
+    lv_obj_set_style_text_color(hdr, lv_color_hex(COL_BLUE), 0);
+    lv_obj_align(hdr, LV_ALIGN_TOP_LEFT, 14, 2);
+
+    mail_tabs = lv_obj_create(parent);
+    lv_obj_set_pos(mail_tabs, 90, 0);
+    lv_obj_set_size(mail_tabs, SCR_W - 100, 32);
+    lv_obj_set_style_bg_opa(mail_tabs, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(mail_tabs, 0, 0);
+    lv_obj_set_style_pad_all(mail_tabs, 0, 0);
+    lv_obj_remove_flag(mail_tabs, LV_OBJ_FLAG_SCROLLABLE);
+
+    mail_list = lv_obj_create(parent);
+    lv_obj_set_pos(mail_list, 12, 34);
+    lv_obj_set_size(mail_list, SCR_W - 24, 250);
+    lv_obj_set_style_bg_opa(mail_list, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(mail_list, 0, 0);
+    lv_obj_set_style_pad_all(mail_list, 0, 0);
+    lv_obj_set_flex_flow(mail_list, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_scroll_dir(mail_list, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(mail_list, LV_SCROLLBAR_MODE_AUTO);
+
+    lbl_mail_empty = lv_label_create(parent);
+    lv_label_set_text(lbl_mail_empty, "Нет писем");
+    lv_obj_set_style_text_font(lbl_mail_empty, &font_ru_16, 0);
+    lv_obj_set_style_text_color(lbl_mail_empty, lv_color_hex(COL_MUTED), 0);
+    lv_obj_align(lbl_mail_empty, LV_ALIGN_CENTER, 0, 0);
+}
+
+/* ---------- message reader (full-screen overlay) ---------- */
+
+static void reader_create(void)
+{
+    reader = lv_obj_create(lv_layer_top());
+    lv_obj_set_size(reader, SCR_W, SCR_H);
+    lv_obj_set_pos(reader, 0, 0);
+    lv_obj_set_style_bg_color(reader, lv_color_hex(COL_BG), 0);
+    lv_obj_set_style_border_width(reader, 0, 0);
+    lv_obj_set_style_radius(reader, 0, 0);
+    lv_obj_set_style_pad_all(reader, 12, 0);
+    lv_obj_remove_flag(reader, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(reader, LV_OBJ_FLAG_HIDDEN);
+
+    lv_obj_t *back = lv_button_create(reader);
+    lv_obj_set_size(back, 92, 34);
+    lv_obj_align(back, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_bg_color(back, lv_color_hex(COL_TRACK), 0);
+    lv_obj_set_style_radius(back, 8, 0);
+    lv_obj_add_event_cb(back, on_reader_close, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *blbl = lv_label_create(back);
+    lv_label_set_text(blbl, LV_SYMBOL_LEFT " Назад");
+    lv_obj_set_style_text_font(blbl, &font_ru_12, 0);
+    lv_obj_set_style_text_color(blbl, lv_color_hex(COL_TEXT), 0);
+    lv_obj_center(blbl);
+
+    lbl_read_meta = lv_label_create(reader);
+    lv_label_set_text(lbl_read_meta, "");
+    lv_obj_set_style_text_font(lbl_read_meta, &font_ru_12, 0);
+    lv_obj_set_style_text_color(lbl_read_meta, lv_color_hex(COL_MUTED), 0);
+    lv_obj_set_width(lbl_read_meta, 340);
+    lv_label_set_long_mode(lbl_read_meta, LV_LABEL_LONG_DOT);
+    lv_obj_align(lbl_read_meta, LV_ALIGN_TOP_RIGHT, 0, 8);
+
+    lbl_read_subject = lv_label_create(reader);
+    lv_label_set_text(lbl_read_subject, "");
+    lv_obj_set_style_text_font(lbl_read_subject, &font_ru_20, 0);
+    lv_obj_set_style_text_color(lbl_read_subject, lv_color_hex(COL_TEXT), 0);
+    lv_obj_set_width(lbl_read_subject, SCR_W - 24);
+    lv_label_set_long_mode(lbl_read_subject, LV_LABEL_LONG_WRAP);
+    lv_obj_align(lbl_read_subject, LV_ALIGN_TOP_LEFT, 0, 44);
+
+    lv_obj_t *body_box = lv_obj_create(reader);
+    lv_obj_set_size(body_box, SCR_W - 24, 340);
+    lv_obj_align(body_box, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_set_style_bg_color(body_box, lv_color_hex(COL_CARD), 0);
+    lv_obj_set_style_border_color(body_box, lv_color_hex(COL_BORDER), 0);
+    lv_obj_set_style_border_width(body_box, 1, 0);
+    lv_obj_set_style_radius(body_box, 10, 0);
+    lv_obj_set_style_pad_all(body_box, 10, 0);
+    lv_obj_set_scroll_dir(body_box, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(body_box, LV_SCROLLBAR_MODE_AUTO);
+
+    lbl_read_body = lv_label_create(body_box);
+    lv_label_set_text(lbl_read_body, "");
+    lv_obj_set_style_text_font(lbl_read_body, &font_ru_16, 0);
+    lv_obj_set_style_text_color(lbl_read_body, lv_color_hex(COL_TEXT), 0);
+    lv_obj_set_width(lbl_read_body, SCR_W - 50);
+    lv_label_set_long_mode(lbl_read_body, LV_LABEL_LONG_WRAP);
+}
+
+void token_ui_set_mail(const mailbox_t *boxes, int count)
+{
+    if (count > MAIL_MAX_BOXES) count = MAIL_MAX_BOXES;
+    if (count < 0) count = 0;
+    memcpy(s_boxes, boxes, sizeof(mailbox_t) * count);
+    s_box_count = count;
+    if (s_box_active >= count) {
+        s_box_active = 0;
+    }
+    if (mail_list) {
+        mail_render_list();
+    }
+}
+
+void token_ui_set_mail_open_cb(mail_open_cb_t cb)
+{
+    s_open_cb = cb;
+}
+
+void token_ui_show_message(const char *subject, const char *from,
+                           const char *when, const char *text)
+{
+    if (!reader) {
+        return;
+    }
+    if (subject) {
+        lv_label_set_text(lbl_read_subject, subject);
+    }
+    if (from) {
+        char meta[80];
+        snprintf(meta, sizeof(meta), "%s   %s", from, when ? when : "");
+        lv_label_set_text(lbl_read_meta, meta);
+    }
+    lv_label_set_text(lbl_read_body, text ? text : "Загрузка ...");
+    lv_obj_scroll_to_y(lv_obj_get_parent(lbl_read_body), 0, LV_ANIM_OFF);
+    lv_obj_remove_flag(reader, LV_OBJ_FLAG_HIDDEN);
+}
+
+/* ---------- page 4: settings ---------- */
 
 static void on_brightness(lv_event_t *e)
 {
@@ -488,10 +769,17 @@ void token_ui_create(void)
     lv_obj_remove_flag(p2, LV_OBJ_FLAG_SCROLLABLE);
     polza_page_create(p2);
 
-    lv_obj_t *p3 = lv_tileview_add_tile(tv, 2, 0, LV_DIR_LEFT);
+    lv_obj_t *p3 = lv_tileview_add_tile(tv, 2, 0, LV_DIR_HOR);
     lv_obj_set_style_pad_all(p3, 0, 0);
     lv_obj_remove_flag(p3, LV_OBJ_FLAG_SCROLLABLE);
-    settings_page_create(p3);
+    mail_page_create(p3);
+
+    lv_obj_t *p4 = lv_tileview_add_tile(tv, 3, 0, LV_DIR_LEFT);
+    lv_obj_set_style_pad_all(p4, 0, 0);
+    lv_obj_remove_flag(p4, LV_OBJ_FLAG_SCROLLABLE);
+    settings_page_create(p4);
+
+    reader_create();
 
     /* ---------- footer ---------- */
     for (int i = 0; i < PAGE_COUNT; i++) {
