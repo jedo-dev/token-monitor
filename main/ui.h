@@ -21,6 +21,18 @@ typedef struct {
     int   hist_len;
     long  hist_tokens[7];
     char  hist_label[7][8];
+
+    /* polza.ai dashboard */
+    bool   polza_ok;
+    double polza_balance;
+    double polza_today;
+    int    polza_reqs_today;
+    int    polza_reqs_total;
+    int    polza_errors;
+    char   polza_top_model[24];
+    int    polza_hist_len;
+    double polza_hist_cost[7];
+    char   polza_hist_label[7][8];
 } token_data_t;
 
 /* Build the Token Monitor screen. Call with the LVGL display lock held. */

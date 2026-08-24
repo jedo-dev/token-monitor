@@ -14,6 +14,7 @@
 #define COL_GREEN   0x3FB950
 #define COL_BLUE    0x58A6FF
 #define COL_RED     0xF85149
+#define COL_PURPLE  0x8B5CF6  /* polza.ai */
 #define COL_TRACK   0x21262D
 
 #define SCR_W 480
@@ -50,12 +51,22 @@ static lv_chart_series_t *chart_ser;
 static lv_obj_t *chart_scale;
 static lv_obj_t *lbl_chart_max;
 
-/* Page 4: settings */
+/* Page 4: polza.ai */
+static lv_obj_t *lbl_pz_balance;
+static lv_obj_t *lbl_pz_today;
+static lv_obj_t *lbl_pz_reqs;
+static lv_obj_t *lbl_pz_model;
+static lv_obj_t *pz_chart;
+static lv_chart_series_t *pz_ser;
+static lv_obj_t *lbl_pz_days;
+static lv_obj_t *lbl_pz_max;
+
+/* Page 5: settings */
 static lv_obj_t *sl_bright;
 static lv_obj_t *lbl_bright;
 
 /* Footer */
-#define PAGE_COUNT 4
+#define PAGE_COUNT 5
 static lv_obj_t *dots[PAGE_COUNT];
 static lv_obj_t *lbl_activity;
 static lv_obj_t *tv;
@@ -282,7 +293,143 @@ static void history_update(const token_data_t *d)
     lv_label_set_text(chart_scale, line);
 }
 
-/* ---------- page 4: settings ---------- */
+/* ---------- page 4: polza.ai dashboard ---------- */
+
+static lv_obj_t *pz_tile(lv_obj_t *parent, int x, int y, int w,
+                         const char *caption, lv_obj_t **value,
+                         lv_color_t col)
+{
+    lv_obj_t *tile = lv_obj_create(parent);
+    lv_obj_set_pos(tile, x, y);
+    lv_obj_set_size(tile, w, 76);
+    lv_obj_set_style_bg_color(tile, lv_color_hex(COL_CARD), 0);
+    lv_obj_set_style_border_color(tile, lv_color_hex(COL_BORDER), 0);
+    lv_obj_set_style_border_width(tile, 1, 0);
+    lv_obj_set_style_radius(tile, 12, 0);
+    lv_obj_set_style_pad_all(tile, 8, 0);
+    lv_obj_remove_flag(tile, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *cap = lv_label_create(tile);
+    lv_label_set_text(cap, caption);
+    lv_obj_set_style_text_font(cap, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(cap, lv_color_hex(COL_MUTED), 0);
+    lv_obj_align(cap, LV_ALIGN_TOP_MID, 0, 0);
+
+    *value = lv_label_create(tile);
+    lv_label_set_text(*value, "--");
+    lv_obj_set_style_text_font(*value, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(*value, col, 0);
+    lv_obj_align(*value, LV_ALIGN_BOTTOM_MID, 0, -2);
+    return tile;
+}
+
+static void polza_page_create(lv_obj_t *parent)
+{
+    lv_obj_t *hdr = lv_label_create(parent);
+    lv_label_set_text(hdr, "polza.ai");
+    lv_obj_set_style_text_font(hdr, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(hdr, lv_color_hex(COL_PURPLE), 0);
+    lv_obj_align(hdr, LV_ALIGN_TOP_LEFT, 14, 2);
+
+    lbl_pz_model = lv_label_create(parent);
+    lv_label_set_text(lbl_pz_model, "");
+    lv_obj_set_style_text_font(lbl_pz_model, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(lbl_pz_model, lv_color_hex(COL_MUTED), 0);
+    lv_obj_align(lbl_pz_model, LV_ALIGN_TOP_RIGHT, -14, 6);
+
+    pz_tile(parent, 12, 22, 148, "BALANCE", &lbl_pz_balance,
+            lv_color_hex(COL_TEXT));
+    pz_tile(parent, 166, 22, 148, "SPENT TODAY", &lbl_pz_today,
+            lv_color_hex(COL_GREEN));
+    pz_tile(parent, 320, 22, 148, "REQUESTS", &lbl_pz_reqs,
+            lv_color_hex(COL_PURPLE));
+
+    lv_obj_t *card = lv_obj_create(parent);
+    lv_obj_set_pos(card, 12, 108);
+    lv_obj_set_size(card, SCR_W - 24, 176);
+    lv_obj_set_style_bg_color(card, lv_color_hex(COL_CARD), 0);
+    lv_obj_set_style_border_color(card, lv_color_hex(COL_BORDER), 0);
+    lv_obj_set_style_border_width(card, 1, 0);
+    lv_obj_set_style_radius(card, 12, 0);
+    lv_obj_set_style_pad_all(card, 10, 0);
+    lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *cap = lv_label_create(card);
+    lv_label_set_text(cap, "SPEND PER DAY, RUB");
+    lv_obj_set_style_text_font(cap, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(cap, lv_color_hex(COL_MUTED), 0);
+    lv_obj_align(cap, LV_ALIGN_TOP_LEFT, 0, 0);
+
+    lbl_pz_max = lv_label_create(card);
+    lv_label_set_text(lbl_pz_max, "");
+    lv_obj_set_style_text_font(lbl_pz_max, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(lbl_pz_max, lv_color_hex(COL_MUTED), 0);
+    lv_obj_align(lbl_pz_max, LV_ALIGN_TOP_RIGHT, 0, 0);
+
+    pz_chart = lv_chart_create(card);
+    lv_obj_set_size(pz_chart, SCR_W - 60, 104);
+    lv_obj_align(pz_chart, LV_ALIGN_TOP_MID, 0, 22);
+    lv_chart_set_type(pz_chart, LV_CHART_TYPE_BAR);
+    lv_chart_set_point_count(pz_chart, 7);
+    lv_chart_set_range(pz_chart, LV_CHART_AXIS_PRIMARY_Y, 0, 100);
+    lv_chart_set_div_line_count(pz_chart, 3, 0);
+    lv_obj_set_style_bg_opa(pz_chart, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(pz_chart, 0, 0);
+    lv_obj_set_style_line_color(pz_chart, lv_color_hex(COL_BORDER), LV_PART_MAIN);
+    lv_obj_set_style_pad_column(pz_chart, 8, LV_PART_MAIN);
+    lv_obj_set_style_radius(pz_chart, 3, LV_PART_ITEMS);
+    pz_ser = lv_chart_add_series(pz_chart, lv_color_hex(COL_PURPLE),
+                                 LV_CHART_AXIS_PRIMARY_Y);
+
+    lbl_pz_days = lv_label_create(card);
+    lv_label_set_text(lbl_pz_days, "");
+    lv_obj_set_style_text_font(lbl_pz_days, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(lbl_pz_days, lv_color_hex(COL_MUTED), 0);
+    lv_obj_align(lbl_pz_days, LV_ALIGN_BOTTOM_MID, 0, 2);
+}
+
+static void polza_update(const token_data_t *d)
+{
+    if (!lbl_pz_balance) {
+        return;
+    }
+    if (!d->polza_ok) {
+        lv_label_set_text(lbl_pz_balance, "n/a");
+        return;
+    }
+
+    lv_label_set_text_fmt(lbl_pz_balance, "%.0f R", d->polza_balance);
+    lv_obj_set_style_text_color(lbl_pz_balance,
+        lv_color_hex(d->polza_balance < 50 ? COL_RED : COL_TEXT), 0);
+    lv_label_set_text_fmt(lbl_pz_today, "%.2f", d->polza_today);
+    lv_label_set_text_fmt(lbl_pz_reqs, "%d", d->polza_reqs_today);
+    if (d->polza_top_model[0]) {
+        lv_label_set_text(lbl_pz_model, d->polza_top_model);
+    }
+
+    if (d->polza_hist_len > 0) {
+        double max = 0.01;
+        for (int i = 0; i < d->polza_hist_len; i++) {
+            if (d->polza_hist_cost[i] > max) max = d->polza_hist_cost[i];
+        }
+        lv_chart_set_point_count(pz_chart, d->polza_hist_len);
+        for (int i = 0; i < d->polza_hist_len; i++) {
+            lv_chart_set_value_by_id(pz_chart, pz_ser, i,
+                (int32_t)(d->polza_hist_cost[i] * 100 / max));
+        }
+        lv_chart_refresh(pz_chart);
+        lv_label_set_text_fmt(lbl_pz_max, "max %.2f R", max);
+
+        char line[96] = "";
+        for (int i = 0; i < d->polza_hist_len; i++) {
+            strlcat(line, d->polza_hist_label[i], sizeof(line));
+            if (i + 1 < d->polza_hist_len) strlcat(line, "  ", sizeof(line));
+        }
+        lv_label_set_text(lbl_pz_days, line);
+    }
+}
+
+/* ---------- page 5: settings ---------- */
 
 static void on_brightness(lv_event_t *e)
 {
@@ -464,10 +611,15 @@ void token_ui_create(void)
     lv_obj_remove_flag(p3, LV_OBJ_FLAG_SCROLLABLE);
     history_page_create(p3);
 
-    lv_obj_t *p4 = lv_tileview_add_tile(tv, 3, 0, LV_DIR_LEFT);
+    lv_obj_t *p4 = lv_tileview_add_tile(tv, 3, 0, LV_DIR_HOR);
     lv_obj_set_style_pad_all(p4, 0, 0);
     lv_obj_remove_flag(p4, LV_OBJ_FLAG_SCROLLABLE);
-    settings_page_create(p4);
+    polza_page_create(p4);
+
+    lv_obj_t *p5 = lv_tileview_add_tile(tv, 4, 0, LV_DIR_LEFT);
+    lv_obj_set_style_pad_all(p5, 0, 0);
+    lv_obj_remove_flag(p5, LV_OBJ_FLAG_SCROLLABLE);
+    settings_page_create(p5);
 
     /* ---------- footer ---------- */
     for (int i = 0; i < PAGE_COUNT; i++) {
@@ -523,6 +675,7 @@ void token_ui_set_live(const token_data_t *d)
     lv_label_set_text_fmt(lbl_temp, "%.1f C", d->temp_c);
 
     history_update(d);
+    polza_update(d);
 
     lv_label_set_text(lbl_activity, d->busy ? "Thinking ..." : "Idle");
     lv_obj_set_style_text_color(lbl_activity,

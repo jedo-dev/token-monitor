@@ -56,7 +56,7 @@ static double json_num(cJSON *root, const char *key, double dflt)
 
 static bool poll_agent(void)
 {
-    char buf[1536];   /* stats + 7 days of history */
+    char buf[3072];   /* stats + history + polza dashboard */
     bool ok = false;
 
     esp_http_client_config_t cfg = {
@@ -88,6 +88,32 @@ static bool poll_agent(void)
                 json_str(root, "sunset", d.sunset, sizeof(d.sunset));
                 json_str(root, "time", d.time, sizeof(d.time));
                 json_str(root, "date", d.date, sizeof(d.date));
+
+                cJSON *pz = cJSON_GetObjectItem(root, "polza");
+                if (cJSON_IsObject(pz)) {
+                    d.polza_ok         = true;
+                    d.polza_balance    = json_num(pz, "balance_rub", 0);
+                    d.polza_today      = json_num(pz, "spent_today_rub", 0);
+                    d.polza_reqs_today = (int)json_num(pz, "requests_today", 0);
+                    d.polza_reqs_total = (int)json_num(pz, "requests_total", 0);
+                    d.polza_errors     = (int)json_num(pz, "errors", 0);
+                    json_str(pz, "top_model", d.polza_top_model,
+                             sizeof(d.polza_top_model));
+
+                    cJSON *ph = cJSON_GetObjectItem(pz, "history");
+                    if (cJSON_IsArray(ph)) {
+                        int n = cJSON_GetArraySize(ph);
+                        int skip = n > 7 ? n - 7 : 0;
+                        for (int i = skip; i < n; i++) {
+                            cJSON *day = cJSON_GetArrayItem(ph, i);
+                            int k = d.polza_hist_len;
+                            d.polza_hist_cost[k] = json_num(day, "c", 0);
+                            json_str(day, "d", d.polza_hist_label[k],
+                                     sizeof(d.polza_hist_label[k]));
+                            d.polza_hist_len++;
+                        }
+                    }
+                }
 
                 cJSON *hist = cJSON_GetObjectItem(root, "history");
                 if (cJSON_IsArray(hist)) {

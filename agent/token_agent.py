@@ -356,6 +356,14 @@ def _collect(include_weather=True):
         })
     out["history"] = hist
 
+    try:
+        import polza
+        p = polza.collect()
+        if p:
+            out["polza"] = p
+    except Exception as e:
+        print(f"[polza] skipped: {e}")
+
     if include_weather:
         out.update(_fetch_weather())
     out["busy"] = _claude_busy()
