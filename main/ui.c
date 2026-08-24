@@ -4,6 +4,10 @@
 #include "bsp/esp-bsp.h"
 #include "ui.h"
 
+LV_FONT_DECLARE(font_ru_12);
+LV_FONT_DECLARE(font_ru_16);
+LV_FONT_DECLARE(font_ru_20);
+
 /* Palette (dark theme) */
 #define COL_BG      0x0D1117
 #define COL_CARD    0x161B22
@@ -174,7 +178,7 @@ static void gauge_create(gauge_t *g, lv_obj_t *parent, int y, const char *chip_t
 
     g->reset = lv_label_create(card);
     lv_label_set_text(g->reset, "Resets in --");
-    lv_obj_set_style_text_font(g->reset, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_font(g->reset, &font_ru_16, 0);
     lv_obj_set_style_text_color(g->reset, lv_color_hex(COL_MUTED), 0);
     lv_obj_align(g->reset, LV_ALIGN_TOP_LEFT, 0, 66);
 }
@@ -331,9 +335,6 @@ static void polza_update(const token_data_t *d)
 
 /* ---------- page 3: mail ---------- */
 
-LV_FONT_DECLARE(font_ru_12);
-LV_FONT_DECLARE(font_ru_16);
-LV_FONT_DECLARE(font_ru_20);
 
 static void mail_render_list(void);
 
@@ -816,12 +817,23 @@ void token_ui_set_live(const token_data_t *d)
     if (!is_live) {
         is_live = true;
         lv_timer_pause(demo_timer);
-        lv_label_set_text(lbl_status, LV_SYMBOL_WIFI " LIVE");
-        lv_obj_set_style_text_color(lbl_status, lv_color_hex(COL_GREEN), 0);
     }
+    /* метку ставим каждый раз: после OFFLINE она должна вернуться в LIVE */
+    lv_label_set_text(lbl_status, LV_SYMBOL_WIFI " LIVE");
+    lv_obj_set_style_text_color(lbl_status, lv_color_hex(COL_GREEN), 0);
 
-    gauge_set(&g_session, d->block_pct, d->reset_min);
-    gauge_set(&g_week, d->week_pct, d->week_reset_min);
+    if (d->usage_ok) {
+        gauge_set(&g_session, d->block_pct, d->reset_min);
+        gauge_set(&g_week, d->week_pct, d->week_reset_min);
+    } else {
+        /* ПК не присылает статистику — честно показываем это вместо старых цифр */
+        lv_label_set_text(g_session.pct, "--");
+        lv_label_set_text(g_week.pct, "--");
+        lv_label_set_text(g_session.reset, "нет данных с ПК");
+        lv_label_set_text(g_week.reset, "");
+        lv_bar_set_value(g_session.bar, 0, LV_ANIM_OFF);
+        lv_bar_set_value(g_week.bar, 0, LV_ANIM_OFF);
+    }
 
     lv_label_set_text(lbl_clock, d->time);
     lv_label_set_text(lbl_date, d->date);

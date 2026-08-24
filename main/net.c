@@ -137,8 +137,11 @@ static bool poll_agent(void)
             if (!cJSON_IsObject(usage)) {
                 usage = root;
             }
-            if (root && cJSON_IsNumber(cJSON_GetObjectItem(usage, "block_pct"))) {
+            /* Ответ валиден сам по себе: расход Claude Code может ещё не
+               прийти (ПК выключен), но почта и polza.ai уже есть. */
+            if (root) {
                 token_data_t d = {0};
+                d.usage_ok = cJSON_IsNumber(cJSON_GetObjectItem(usage, "block_pct"));
                 d.block_pct      = (int)json_num(usage, "block_pct", 0);
                 d.reset_min      = (int)json_num(usage, "reset_min", 0);
                 d.week_pct       = (int)json_num(usage, "week_pct", 0);

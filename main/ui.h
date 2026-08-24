@@ -4,6 +4,7 @@
 
 /* Snapshot of everything the screen shows. Filled by net.c from the agent. */
 typedef struct {
+    bool  usage_ok;        /* пришёл ли расход Claude Code с ПК */
     int   block_pct;
     int   reset_min;
     int   week_pct;
