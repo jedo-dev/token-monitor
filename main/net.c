@@ -79,6 +79,7 @@ static void parse_mail(cJSON *root)
         json_str(box, "id", dst->id, sizeof(dst->id));
         json_str(box, "label", dst->label, sizeof(dst->label));
         dst->unread = (int)json_num(box, "unread", 0);
+        dst->tasks = cJSON_IsTrue(cJSON_GetObjectItem(box, "tasks"));
 
         cJSON *msgs = cJSON_GetObjectItem(box, "messages");
         if (cJSON_IsArray(msgs)) {
@@ -90,6 +91,7 @@ static void parse_mail(cJSON *root)
                 json_str(m, "from", it->from, sizeof(it->from));
                 json_str(m, "subject", it->subject, sizeof(it->subject));
                 json_str(m, "when", it->when, sizeof(it->when));
+                json_str(m, "task", it->task, sizeof(it->task));
                 it->seen = cJSON_IsTrue(cJSON_GetObjectItem(m, "seen"));
                 dst->count++;
             }
@@ -218,9 +220,12 @@ static bool poll_agent(void)
 
 /* ---- on-demand message body ---- */
 
+typedef enum { REQ_BODY, REQ_DELETE_TASK } mail_req_kind_t;
+
 typedef struct {
+    mail_req_kind_t kind;
     char box_id[32];
-    char uid[16];
+    char uid[16];       /* uid письма либо ключ задачи */
 } mail_req_t;
 
 static QueueHandle_t s_mail_q;
@@ -293,12 +298,60 @@ static void fetch_body(const mail_req_t *req)
     free(buf);
 }
 
+/* DELETE /display/task/<box>/<taskKey> — снимает задачу из Mongo. */
+static void delete_task(const mail_req_t *req)
+{
+    char url[192];
+    const char *base = AGENT_URL;
+    const char *tail = strstr(base, "/display/state");
+    size_t prefix = tail ? (size_t)(tail - base) : strlen(base);
+    if (prefix >= sizeof(url)) {
+        prefix = sizeof(url) - 1;
+    }
+    memcpy(url, base, prefix);
+    url[prefix] = '\0';
+    snprintf(url + prefix, sizeof(url) - prefix, "/display/task/%s/%s",
+             req->box_id, req->uid);
+
+    esp_http_client_config_t cfg = {
+        .url = url,
+        .method = HTTP_METHOD_DELETE,
+        .timeout_ms = 8000,
+    };
+    esp_http_client_handle_t cl = esp_http_client_init(&cfg);
+    if (!cl) {
+        return;
+    }
+#ifdef API_KEY
+    esp_http_client_set_header(cl, "x-api-key", API_KEY);
+#endif
+
+    bool ok = false;
+    if (esp_http_client_open(cl, 0) == ESP_OK) {
+        esp_http_client_fetch_headers(cl);
+        ok = esp_http_client_get_status_code(cl) == 200;
+        esp_http_client_close(cl);
+    }
+    esp_http_client_cleanup(cl);
+    ESP_LOGI(TAG, "delete task %s: %s", req->uid, ok ? "ok" : "failed");
+
+    if (!ok) {
+        bsp_display_lock(0);
+        token_ui_toast("Не удалось удалить", false);
+        bsp_display_unlock();
+    }
+}
+
 static void mail_task(void *arg)
 {
     mail_req_t req;
     for (;;) {
         if (xQueueReceive(s_mail_q, &req, portMAX_DELAY) == pdTRUE) {
-            fetch_body(&req);
+            if (req.kind == REQ_DELETE_TASK) {
+                delete_task(&req);
+            } else {
+                fetch_body(&req);
+            }
         }
     }
 }
@@ -306,9 +359,17 @@ static void mail_task(void *arg)
 /* Called from the LVGL thread — must not block. */
 static void on_mail_open(const char *box_id, const char *uid)
 {
-    mail_req_t req = {0};
+    mail_req_t req = { .kind = REQ_BODY };
     strlcpy(req.box_id, box_id, sizeof(req.box_id));
     strlcpy(req.uid, uid, sizeof(req.uid));
+    xQueueSend(s_mail_q, &req, 0);
+}
+
+static void on_task_delete_req(const char *box_id, const char *task_key)
+{
+    mail_req_t req = { .kind = REQ_DELETE_TASK };
+    strlcpy(req.box_id, box_id, sizeof(req.box_id));
+    strlcpy(req.uid, task_key, sizeof(req.uid));
     xQueueSend(s_mail_q, &req, 0);
 }
 
@@ -358,6 +419,7 @@ void net_start(void)
 
     s_mail_q = xQueueCreate(2, sizeof(mail_req_t));
     token_ui_set_mail_open_cb(on_mail_open);
+    token_ui_set_task_delete_cb(on_task_delete_req);
 
     xTaskCreate(poll_task, "agent_poll", 6144, NULL, 5, NULL);
     xTaskCreate(mail_task, "mail_body", 6144, NULL, 5, NULL);

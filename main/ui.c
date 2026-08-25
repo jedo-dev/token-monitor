@@ -63,6 +63,14 @@ static mailbox_t s_boxes[MAIL_MAX_BOXES];
 static int  s_box_count;
 static int  s_box_active;
 static mail_open_cb_t s_open_cb;
+static task_delete_cb_t s_del_cb;
+static lv_obj_t *toast;
+static lv_obj_t *lbl_toast;
+
+/* геометрия строки письма */
+#define ROW_H   64
+#define BTN_W   48
+#define TEXT_W  (SCR_W - 24 - 22 - BTN_W - 16)
 
 /* Message reader overlay */
 static lv_obj_t *reader;
@@ -363,6 +371,22 @@ static void on_mail_item(lv_event_t *e)
     }
 }
 
+static void on_task_delete(lv_event_t *e)
+{
+    int idx = (int)(intptr_t)lv_event_get_user_data(e);
+    if (s_box_active >= s_box_count) {
+        return;
+    }
+    const mailbox_t *box = &s_boxes[s_box_active];
+    if (idx < 0 || idx >= box->count || !box->items[idx].task[0]) {
+        return;
+    }
+    if (s_del_cb) {
+        s_del_cb(box->id, box->items[idx].task);
+        token_ui_toast(box->items[idx].task, true);
+    }
+}
+
 static void on_mail_tab(lv_event_t *e)
 {
     s_box_active = (int)(intptr_t)lv_event_get_user_data(e);
@@ -414,53 +438,82 @@ static void mail_render_list(void)
     const mailbox_t *box = &s_boxes[s_box_active];
     for (int i = 0; i < box->count; i++) {
         const mail_item_t *m = &box->items[i];
+        bool has_task = box->tasks && m->task[0];
 
         lv_obj_t *row = lv_obj_create(mail_list);
         lv_obj_set_width(row, lv_pct(100));
-        lv_obj_set_height(row, 62);
+        lv_obj_set_height(row, ROW_H);
         lv_obj_set_style_bg_color(row, lv_color_hex(COL_CARD), 0);
         lv_obj_set_style_border_color(row, lv_color_hex(COL_BORDER), 0);
         lv_obj_set_style_border_width(row, 1, 0);
         lv_obj_set_style_radius(row, 10, 0);
-        lv_obj_set_style_pad_all(row, 8, 0);
+        lv_obj_set_style_pad_all(row, 0, 0);
         lv_obj_set_style_margin_bottom(row, 6, 0);
         lv_obj_remove_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_add_event_cb(row, on_mail_item, LV_EVENT_CLICKED,
-                            (void *)(intptr_t)i);
 
-        if (!m->seen) {   /* unread marker */
+        /* левая колонка: метка непрочитанного */
+        if (!m->seen) {
             lv_obj_t *dot = lv_obj_create(row);
             lv_obj_set_size(dot, 8, 8);
             lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
             lv_obj_set_style_border_width(dot, 0, 0);
             lv_obj_set_style_bg_color(dot, lv_color_hex(COL_ACCENT), 0);
-            lv_obj_align(dot, LV_ALIGN_LEFT_MID, -2, 0);
+            lv_obj_align(dot, LV_ALIGN_LEFT_MID, 8, 0);
         }
+
+        /* текстовый блок фиксированной ширины, чтобы не наезжал на кнопки */
+        int text_w = TEXT_W - (has_task ? BTN_W : 0);
 
         lv_obj_t *from = lv_label_create(row);
         lv_label_set_text(from, m->from);
         lv_obj_set_style_text_font(from, &font_ru_12, 0);
         lv_obj_set_style_text_color(from, lv_color_hex(
             m->seen ? COL_MUTED : COL_ACCENT), 0);
-        lv_obj_set_width(from, 320);
+        lv_obj_set_width(from, text_w - 46);
         lv_label_set_long_mode(from, LV_LABEL_LONG_DOT);
-        lv_obj_align(from, LV_ALIGN_TOP_LEFT, 14, 0);
+        lv_obj_align(from, LV_ALIGN_TOP_LEFT, 22, 8);
 
         lv_obj_t *when = lv_label_create(row);
         lv_label_set_text(when, m->when);
         lv_obj_set_style_text_font(when, &font_ru_12, 0);
         lv_obj_set_style_text_color(when, lv_color_hex(COL_MUTED), 0);
-        lv_obj_align(when, LV_ALIGN_TOP_RIGHT, 0, 0);
+        lv_obj_align(when, LV_ALIGN_TOP_LEFT, 22 + text_w - 42, 8);
 
         lv_obj_t *subj = lv_label_create(row);
         lv_label_set_text(subj, m->subject);
         lv_obj_set_style_text_font(subj, &font_ru_16, 0);
-        lv_obj_set_style_text_color(subj, lv_color_hex(
-            m->seen ? COL_TEXT : COL_TEXT), 0);
-        lv_obj_set_width(subj, 420);
+        lv_obj_set_style_text_color(subj, lv_color_hex(COL_TEXT), 0);
+        lv_obj_set_width(subj, text_w);
         lv_label_set_long_mode(subj, LV_LABEL_LONG_DOT);
-        lv_obj_align(subj, LV_ALIGN_BOTTOM_LEFT, 14, 0);
+        lv_obj_align(subj, LV_ALIGN_TOP_LEFT, 22, 28);
+
+        /* кнопка «прочитать» */
+        lv_obj_t *open = lv_button_create(row);
+        lv_obj_set_size(open, 40, 40);
+        lv_obj_align(open, LV_ALIGN_RIGHT_MID, has_task ? -50 : -8, 0);
+        lv_obj_set_style_bg_color(open, lv_color_hex(COL_TRACK), 0);
+        lv_obj_set_style_radius(open, 8, 0);
+        lv_obj_add_event_cb(open, on_mail_item, LV_EVENT_CLICKED,
+                            (void *)(intptr_t)i);
+        lv_obj_t *oi = lv_label_create(open);
+        lv_label_set_text(oi, LV_SYMBOL_EYE_OPEN);
+        lv_obj_set_style_text_color(oi, lv_color_hex(COL_BLUE), 0);
+        lv_obj_center(oi);
+
+        /* кнопка «удалить задачу» — только для трекера и Jira */
+        if (has_task) {
+            lv_obj_t *del = lv_button_create(row);
+            lv_obj_set_size(del, 40, 40);
+            lv_obj_align(del, LV_ALIGN_RIGHT_MID, -8, 0);
+            lv_obj_set_style_bg_color(del, lv_color_hex(COL_TRACK), 0);
+            lv_obj_set_style_radius(del, 8, 0);
+            lv_obj_add_event_cb(del, on_task_delete, LV_EVENT_CLICKED,
+                                (void *)(intptr_t)i);
+            lv_obj_t *di = lv_label_create(del);
+            lv_label_set_text(di, LV_SYMBOL_TRASH);
+            lv_obj_set_style_text_color(di, lv_color_hex(COL_RED), 0);
+            lv_obj_center(di);
+        }
     }
 }
 
@@ -470,11 +523,11 @@ static void mail_page_create(lv_obj_t *parent)
     lv_label_set_text(hdr, "Почта");
     lv_obj_set_style_text_font(hdr, &font_ru_16, 0);
     lv_obj_set_style_text_color(hdr, lv_color_hex(COL_BLUE), 0);
-    lv_obj_align(hdr, LV_ALIGN_TOP_LEFT, 14, 2);
+    lv_obj_align(hdr, LV_ALIGN_TOP_LEFT, 12, 6);
 
     mail_tabs = lv_obj_create(parent);
-    lv_obj_set_pos(mail_tabs, 90, 0);
-    lv_obj_set_size(mail_tabs, SCR_W - 100, 32);
+    lv_obj_set_pos(mail_tabs, 80, 0);
+    lv_obj_set_size(mail_tabs, SCR_W - 92, 34);
     lv_obj_set_style_bg_opa(mail_tabs, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(mail_tabs, 0, 0);
     lv_obj_set_style_pad_all(mail_tabs, 0, 0);
@@ -482,8 +535,8 @@ static void mail_page_create(lv_obj_t *parent)
     lv_obj_set_scrollbar_mode(mail_tabs, LV_SCROLLBAR_MODE_OFF);
 
     mail_list = lv_obj_create(parent);
-    lv_obj_set_pos(mail_list, 12, 34);
-    lv_obj_set_size(mail_list, SCR_W - 24, 250);
+    lv_obj_set_pos(mail_list, 12, 40);
+    lv_obj_set_size(mail_list, SCR_W - 24, 306);
     lv_obj_set_style_bg_opa(mail_list, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(mail_list, 0, 0);
     lv_obj_set_style_pad_all(mail_list, 0, 0);
@@ -576,6 +629,31 @@ void token_ui_set_mail(const mailbox_t *boxes, int count)
 void token_ui_set_mail_open_cb(mail_open_cb_t cb)
 {
     s_open_cb = cb;
+}
+
+void token_ui_set_task_delete_cb(task_delete_cb_t cb)
+{
+    s_del_cb = cb;
+}
+
+static void toast_hide(lv_timer_t *t)
+{
+    lv_obj_add_flag(toast, LV_OBJ_FLAG_HIDDEN);
+    lv_timer_delete(t);
+}
+
+void token_ui_toast(const char *text, bool success)
+{
+    if (!toast) {
+        return;
+    }
+    char buf[64];
+    snprintf(buf, sizeof(buf), success ? "Задача %s удалена" : "%s", text);
+    lv_label_set_text(lbl_toast, buf);
+    lv_obj_set_style_bg_color(toast,
+        lv_color_hex(success ? COL_GREEN : COL_RED), 0);
+    lv_obj_remove_flag(toast, LV_OBJ_FLAG_HIDDEN);
+    lv_timer_create(toast_hide, 2200, NULL);
 }
 
 void token_ui_show_message(const char *subject, const char *from,
@@ -712,49 +790,49 @@ void token_ui_create(void)
     lv_obj_set_style_text_font(lbl_cat, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(lbl_cat, lv_color_hex(COL_MUTED), 0);
     lv_obj_set_style_text_line_space(lbl_cat, 0, 0);
-    lv_obj_align(lbl_cat, LV_ALIGN_TOP_LEFT, 14, 10);
+    lv_obj_align(lbl_cat, LV_ALIGN_TOP_LEFT, 12, 8);
 
     lbl_title = lv_label_create(scr);
     lv_label_set_text(lbl_title, "Claude Code");
     lv_obj_set_style_text_font(lbl_title, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(lbl_title, lv_color_hex(COL_ACCENT), 0);
-    lv_obj_align(lbl_title, LV_ALIGN_TOP_MID, 0, 14);
+    lv_obj_align(lbl_title, LV_ALIGN_TOP_MID, 0, 12);
 
     lbl_clock = lv_label_create(scr);
     lv_label_set_text(lbl_clock, "--:--");
     lv_obj_set_style_text_font(lbl_clock, &lv_font_montserrat_26, 0);
     lv_obj_set_style_text_color(lbl_clock, lv_color_hex(COL_TEXT), 0);
-    lv_obj_align(lbl_clock, LV_ALIGN_TOP_RIGHT, -14, 8);
+    lv_obj_align(lbl_clock, LV_ALIGN_TOP_RIGHT, -12, 6);
 
     lbl_date = lv_label_create(scr);
     lv_label_set_text(lbl_date, "");
     lv_obj_set_style_text_font(lbl_date, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(lbl_date, lv_color_hex(COL_MUTED), 0);
-    lv_obj_align(lbl_date, LV_ALIGN_TOP_RIGHT, -14, 40);
+    lv_obj_align(lbl_date, LV_ALIGN_TOP_RIGHT, -12, 38);
 
     /* ---------- info strip ---------- */
     lbl_sun = lv_label_create(scr);
     lv_label_set_text(lbl_sun, LV_SYMBOL_UP " --:--   " LV_SYMBOL_DOWN " --:--");
     lv_obj_set_style_text_font(lbl_sun, &lv_font_montserrat_16, 0);
     lv_obj_set_style_text_color(lbl_sun, lv_color_hex(COL_MUTED), 0);
-    lv_obj_align(lbl_sun, LV_ALIGN_TOP_LEFT, 14, 62);
+    lv_obj_align(lbl_sun, LV_ALIGN_TOP_LEFT, 12, 60);
 
     lbl_temp = lv_label_create(scr);
     lv_label_set_text(lbl_temp, "--.- C");
     lv_obj_set_style_text_font(lbl_temp, &lv_font_montserrat_16, 0);
     lv_obj_set_style_text_color(lbl_temp, lv_color_hex(COL_MUTED), 0);
-    lv_obj_align(lbl_temp, LV_ALIGN_TOP_MID, 40, 62);
+    lv_obj_align(lbl_temp, LV_ALIGN_TOP_MID, 0, 60);
 
     lbl_batt = lv_label_create(scr);
     lv_label_set_text(lbl_batt, LV_SYMBOL_BATTERY_FULL " --%");
     lv_obj_set_style_text_font(lbl_batt, &lv_font_montserrat_16, 0);
     lv_obj_set_style_text_color(lbl_batt, lv_color_hex(COL_MUTED), 0);
-    lv_obj_align(lbl_batt, LV_ALIGN_TOP_RIGHT, -14, 62);
+    lv_obj_align(lbl_batt, LV_ALIGN_TOP_RIGHT, -12, 60);
 
     /* ---------- pages ---------- */
     tv = lv_tileview_create(scr);
-    lv_obj_set_pos(tv, 0, 90);
-    lv_obj_set_size(tv, SCR_W, 348);
+    lv_obj_set_pos(tv, 0, 86);
+    lv_obj_set_size(tv, SCR_W, 352);
     lv_obj_set_style_bg_opa(tv, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(tv, 0, 0);
     lv_obj_set_scrollbar_mode(tv, LV_SCROLLBAR_MODE_OFF);
@@ -806,6 +884,20 @@ void token_ui_create(void)
     lv_obj_set_style_text_font(lbl_status, &lv_font_montserrat_16, 0);
     lv_obj_set_style_text_color(lbl_status, lv_color_hex(COL_ACCENT), 0);
     lv_obj_align(lbl_status, LV_ALIGN_BOTTOM_RIGHT, -14, -14);
+
+    /* всплывающее уведомление поверх всего */
+    toast = lv_obj_create(lv_layer_top());
+    lv_obj_set_size(toast, 300, 44);
+    lv_obj_align(toast, LV_ALIGN_BOTTOM_MID, 0, -60);
+    lv_obj_set_style_radius(toast, 10, 0);
+    lv_obj_set_style_border_width(toast, 0, 0);
+    lv_obj_set_style_pad_all(toast, 8, 0);
+    lv_obj_remove_flag(toast, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(toast, LV_OBJ_FLAG_HIDDEN);
+    lbl_toast = lv_label_create(toast);
+    lv_obj_set_style_text_font(lbl_toast, &font_ru_16, 0);
+    lv_obj_set_style_text_color(lbl_toast, lv_color_hex(COL_BG), 0);
+    lv_obj_center(lbl_toast);
 
     demo_timer = lv_timer_create(demo_tick, 700, NULL);
 }

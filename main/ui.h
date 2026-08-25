@@ -58,6 +58,7 @@ typedef struct {
     char from[48];
     char subject[104];
     char when[12];
+    char task[16];     /* ключ задачи трекера, пусто если письмо обычное */
     bool seen;
 } mail_item_t;
 
@@ -66,6 +67,7 @@ typedef struct {
     char label[32];
     int  unread;
     int  count;
+    bool tasks;        /* интеграция трекера: можно удалять задачи */
     mail_item_t items[MAIL_MAX_ITEMS];
 } mailbox_t;
 
@@ -75,6 +77,13 @@ void token_ui_set_mail(const mailbox_t *boxes, int count);
 /* Called when the user taps a message: net.c fetches the body. */
 typedef void (*mail_open_cb_t)(const char *box_id, const char *uid);
 void token_ui_set_mail_open_cb(mail_open_cb_t cb);
+
+/* Called when the user taps the trash icon on a tracker message. */
+typedef void (*task_delete_cb_t)(const char *box_id, const char *task_key);
+void token_ui_set_task_delete_cb(task_delete_cb_t cb);
+
+/* Short toast at the bottom of the screen. */
+void token_ui_toast(const char *text, bool success);
 
 /* Show a fetched message body (or an error when text is NULL). */
 void token_ui_show_message(const char *subject, const char *from,
