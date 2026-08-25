@@ -91,6 +91,11 @@ static void parse_mail(cJSON *root)
             cJSON *m;
             cJSON_ArrayForEach(m, msgs) {
                 if (dst->count >= MAIL_MAX_ITEMS) break;
+                /* прочитанные письма не показываем; у задач трекера
+                   seen всегда true, их пропускать нельзя */
+                if (!dst->tasks && cJSON_IsTrue(cJSON_GetObjectItem(m, "seen"))) {
+                    continue;
+                }
                 mail_item_t *it = &dst->items[dst->count];
                 json_str(m, "uid", it->uid, sizeof(it->uid));
                 json_str(m, "from", it->from, sizeof(it->from));
