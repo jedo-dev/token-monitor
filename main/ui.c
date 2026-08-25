@@ -417,6 +417,8 @@ void token_ui_remove_task(const char *box_id, const char *task_key)
     token_ui_toast(task_key, true);
 }
 
+/* Прочитанные письма на экране не нужны — убираем строку сразу после
+   открытия. Задачи трекера (seen == true) не трогаем. */
 void token_ui_mark_seen(const char *box_id, const char *uid)
 {
     for (int b = 0; b < s_box_count; b++) {
@@ -424,17 +426,26 @@ void token_ui_mark_seen(const char *box_id, const char *uid)
             continue;
         }
         mailbox_t *box = &s_boxes[b];
+        if (box->tasks) {
+            return;
+        }
         for (int i = 0; i < box->count; i++) {
-            if (strcmp(box->items[i].uid, uid) == 0 && !box->items[i].seen) {
-                box->items[i].seen = true;
-                if (box->unread > 0) {
-                    box->unread--;
-                }
-                if (b == s_box_active) {
-                    mail_render_list();
-                }
-                return;
+            if (strcmp(box->items[i].uid, uid) != 0) {
+                continue;
             }
+            for (int j = i; j + 1 < box->count; j++) {
+                box->items[j] = box->items[j + 1];
+            }
+            box->count--;
+            if (box->unread > 0) {
+                box->unread--;
+            }
+            if (b == s_box_active) {
+                mail_render_list();
+            } else {
+                mail_render_tabs();
+            }
+            return;
         }
         return;
     }
@@ -669,6 +680,15 @@ void token_ui_set_mail(const mailbox_t *boxes, int count)
 {
     if (count > MAIL_MAX_BOXES) count = MAIL_MAX_BOXES;
     if (count < 0) count = 0;
+
+    /* Данные приходят каждые 3 секунды, но почта меняется редко.
+       Без этой проверки список пересоздавался бы постоянно — экран мигал,
+       а память бесконечно перевыделялась. */
+    if (count == s_box_count &&
+        memcmp(s_boxes, boxes, sizeof(mailbox_t) * count) == 0) {
+        return;
+    }
+
     memcpy(s_boxes, boxes, sizeof(mailbox_t) * count);
     s_box_count = count;
     if (s_box_active >= count) {

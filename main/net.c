@@ -8,6 +8,7 @@
 #include "esp_netif.h"
 #include "esp_log.h"
 #include "esp_http_client.h"
+#include "esp_heap_caps.h"
 #include "cJSON.h"
 #include "bsp/esp-bsp.h"
 #include "ui.h"
@@ -59,6 +60,10 @@ static double json_num(cJSON *root, const char *key, double dflt)
    the heap (PSRAM) rather than the task stack. */
 #define RESP_MAX 49152   /* с запасом: живёт в PSRAM, не на стеке задачи */
 
+/* Выделяем один раз на старте: повторный malloc/free такого размера каждые
+   3 секунды фрагментирует кучу. */
+static char *s_resp;
+
 static void parse_mail(cJSON *root)
 {
     cJSON *boxes = cJSON_GetObjectItem(root, "mailboxes");
@@ -108,9 +113,9 @@ static void parse_mail(cJSON *root)
 static bool poll_agent(void)
 {
     bool ok = false;
-    char *buf = malloc(RESP_MAX);
+    char *buf = s_resp;
     if (!buf) {
-        ESP_LOGE(TAG, "out of memory for response buffer");
+        ESP_LOGE(TAG, "no response buffer");
         return false;
     }
 
@@ -120,7 +125,6 @@ static bool poll_agent(void)
     };
     esp_http_client_handle_t cl = esp_http_client_init(&cfg);
     if (!cl) {
-        free(buf);
         return false;
     }
 #ifdef API_KEY
@@ -214,7 +218,6 @@ static bool poll_agent(void)
         esp_http_client_close(cl);
     }
     esp_http_client_cleanup(cl);
-    free(buf);
     return ok;
 }
 
@@ -253,7 +256,7 @@ static void fetch_body(const mail_req_t *req)
     char url[192];
     build_mail_url(url, sizeof(url), req);
 
-    char *buf = malloc(RESP_MAX);
+    char *buf = s_resp;
     if (!buf) {
         return;
     }
@@ -264,7 +267,6 @@ static void fetch_body(const mail_req_t *req)
     };
     esp_http_client_handle_t cl = esp_http_client_init(&cfg);
     if (!cl) {
-        free(buf);
         return;
     }
 #ifdef API_KEY
@@ -298,7 +300,6 @@ static void fetch_body(const mail_req_t *req)
     bsp_display_unlock();
 
     cJSON_Delete(root);
-    free(buf);
 }
 
 /* DELETE /display/task/<box>/<taskKey> — снимает задачу из Mongo. */
@@ -399,6 +400,10 @@ static void poll_task(void *arg)
 void net_start(void)
 {
     s_ev = xEventGroupCreate();
+    s_resp = heap_caps_malloc(RESP_MAX, MALLOC_CAP_SPIRAM);
+    if (!s_resp) {
+        s_resp = malloc(RESP_MAX);
+    }
 
     ESP_ERROR_CHECK(esp_netif_init());
     esp_err_t err = esp_event_loop_create_default();

@@ -6,3 +6,6 @@ dependencies.lock
 main/secrets.h
 agent/.token
 calibration.json
+presets
+presets/
+./presets/*
