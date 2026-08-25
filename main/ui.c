@@ -345,6 +345,7 @@ static void polza_update(const token_data_t *d)
 
 
 static void mail_render_list(void);
+static void mail_render_tabs(void);
 
 static void on_reader_close(lv_event_t *e)
 {
@@ -383,7 +384,59 @@ static void on_task_delete(lv_event_t *e)
     }
     if (s_del_cb) {
         s_del_cb(box->id, box->items[idx].task);
-        token_ui_toast(box->items[idx].task, true);
+    }
+}
+
+void token_ui_remove_task(const char *box_id, const char *task_key)
+{
+    for (int b = 0; b < s_box_count; b++) {
+        if (strcmp(s_boxes[b].id, box_id) != 0) {
+            continue;
+        }
+        mailbox_t *box = &s_boxes[b];
+        for (int i = 0; i < box->count; i++) {
+            if (strcmp(box->items[i].task, task_key) != 0) {
+                continue;
+            }
+            for (int j = i; j + 1 < box->count; j++) {
+                box->items[j] = box->items[j + 1];
+            }
+            box->count--;
+            if (box->unread > 0) {
+                box->unread--;
+            }
+            if (b == s_box_active) {
+                mail_render_list();
+            } else {
+                mail_render_tabs();
+            }
+            break;
+        }
+        break;
+    }
+    token_ui_toast(task_key, true);
+}
+
+void token_ui_mark_seen(const char *box_id, const char *uid)
+{
+    for (int b = 0; b < s_box_count; b++) {
+        if (strcmp(s_boxes[b].id, box_id) != 0) {
+            continue;
+        }
+        mailbox_t *box = &s_boxes[b];
+        for (int i = 0; i < box->count; i++) {
+            if (strcmp(box->items[i].uid, uid) == 0 && !box->items[i].seen) {
+                box->items[i].seen = true;
+                if (box->unread > 0) {
+                    box->unread--;
+                }
+                if (b == s_box_active) {
+                    mail_render_list();
+                }
+                return;
+            }
+        }
+        return;
     }
 }
 

@@ -85,6 +85,12 @@ void token_ui_set_task_delete_cb(task_delete_cb_t cb);
 /* Short toast at the bottom of the screen. */
 void token_ui_toast(const char *text, bool success);
 
+/* Drop a row locally after the server confirmed the task is gone. */
+void token_ui_remove_task(const char *box_id, const char *task_key);
+
+/* Mark a message read locally right after its body was fetched. */
+void token_ui_mark_seen(const char *box_id, const char *uid);
+
 /* Show a fetched message body (or an error when text is NULL). */
 void token_ui_show_message(const char *subject, const char *from,
                            const char *when, const char *text);

@@ -292,6 +292,9 @@ static void fetch_body(const mail_req_t *req)
     bsp_display_lock(0);
     token_ui_show_message(NULL, NULL, NULL,
                           text ? text : "Не удалось загрузить письмо");
+    if (text) {
+        token_ui_mark_seen(req->box_id, req->uid);
+    }
     bsp_display_unlock();
 
     cJSON_Delete(root);
@@ -335,11 +338,13 @@ static void delete_task(const mail_req_t *req)
     esp_http_client_cleanup(cl);
     ESP_LOGI(TAG, "delete task %s: %s", req->uid, ok ? "ok" : "failed");
 
-    if (!ok) {
-        bsp_display_lock(0);
+    bsp_display_lock(0);
+    if (ok) {
+        token_ui_remove_task(req->box_id, req->uid);
+    } else {
         token_ui_toast("Не удалось удалить", false);
-        bsp_display_unlock();
     }
+    bsp_display_unlock();
 }
 
 static void mail_task(void *arg)
