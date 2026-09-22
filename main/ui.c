@@ -211,6 +211,20 @@ static int weather_icon(int code, bool is_day)
 
 /* ---------- шапка ---------- */
 
+#define LINK_RIGHT 398       /* правый край слова LIVE / THINKING / OFFLINE */
+
+/* Состояние связи: слово прижато вправо, точка — за 6 px до него. */
+static void link_set(const char *text, uint32_t color)
+{
+    lv_label_set_text(lbl_link, text);
+    lv_obj_set_style_text_color(lbl_link, lv_color_hex(color), 0);
+    lv_obj_set_style_bg_color(dot, lv_color_hex(color), 0);
+    lv_obj_update_layout(lbl_link);
+    int w = lv_obj_get_width(lbl_link);
+    lv_obj_set_x(lbl_link, LINK_RIGHT - w);
+    lv_obj_set_x(dot, LINK_RIGHT - w - 6 - 8);
+}
+
 static void header_create(lv_obj_t *scr)
 {
     lv_obj_t *title = label_box(scr, &tm_sb20, COL_TEXT, 8, 8, 240, 32,
@@ -220,8 +234,9 @@ static void header_create(lv_obj_t *scr)
     dot = rect(scr, 354, 20, 8, 8, COL_GREEN, 4);
     lbl_link = label_box(scr, &tm_m12, COL_GREEN, 338, 8, 60, 32,
                          LV_TEXT_ALIGN_RIGHT);
+    lv_obj_set_width(lbl_link, LV_SIZE_CONTENT);
     lv_obj_set_style_text_letter_space(lbl_link, 1, 0);
-    lv_label_set_text(lbl_link, "LIVE");
+    link_set("LIVE", COL_GREEN);
 
     /* батарея: корпус 21×12 с обводкой, заливка по заряду, контакт 2×5 */
     lv_obj_t *body = lv_obj_create(scr);
@@ -669,10 +684,11 @@ void token_ui_set_live(const token_data_t *d)
 {
     char buf[32];
 
-    lv_obj_set_x(dot, 354);
-    lv_obj_set_style_bg_color(dot, lv_color_hex(COL_GREEN), 0);
-    lv_label_set_text(lbl_link, "LIVE");
-    lv_obj_set_style_text_color(lbl_link, lv_color_hex(COL_GREEN), 0);
+    if (d->busy) {
+        link_set("THINKING", COL_ACCENT);
+    } else {
+        link_set("LIVE", COL_GREEN);
+    }
 
     if (d->usage_ok) {
         limit_set(&lim_block, d->block_pct, d->reset_min);
@@ -721,10 +737,7 @@ void token_ui_set_offline(void)
     if (!dot) {
         return;
     }
-    lv_obj_set_x(dot, 330);
-    lv_obj_set_style_bg_color(dot, lv_color_hex(COL_RED), 0);
-    lv_label_set_text(lbl_link, "OFFLINE");
-    lv_obj_set_style_text_color(lbl_link, lv_color_hex(COL_RED), 0);
+    link_set("OFFLINE", COL_RED);
     logo_set_busy(false);
 }
 

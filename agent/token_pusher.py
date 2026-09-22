@@ -12,12 +12,14 @@ import re
 import os
 import socket
 import sys
+import threading
 import time
 import urllib.request
 
 import token_agent  # переиспользуем сбор статистики и калибровку
 
-PUSH_EVERY_SEC = 30
+PUSH_EVERY_SEC = 30   # полный сбор статистики (ccusage медленный)
+BUSY_CHECK_SEC = 3    # «Claude работает» проверяем часто и шлём сразу
 
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -91,19 +93,44 @@ def main():
     host = socket.gethostname()
     print(f"Отправляю статистику {host} -> {broker} каждые {PUSH_EVERY_SEC}с")
 
+    # Полный сбор идёт в фоне: ccusage работает десятки секунд, и за это
+    # время признак «Claude работает» устарел бы. Основной цикл отдельно
+    # следит за ним и отправляет изменение сразу.
+    latest = {}
+    lock = threading.Lock()
+
+    def collector():
+        while True:
+            try:
+                data = token_agent._collect(include_weather=False)
+                data["host"] = host
+                with lock:
+                    latest.clear()
+                    latest.update(data)
+                    latest["_fresh"] = True
+            except Exception as e:
+                print(f"[collect] не получилось: {e}")
+            time.sleep(PUSH_EVERY_SEC)
+
+    threading.Thread(target=collector, daemon=True).start()
+
+    sent_busy = None
     while True:
-        try:
-            # погоду и часы добавит брокер — здесь только расход токенов
-            data = token_agent._collect(include_weather=False)
-            data["host"] = host
-            push(broker, data)
-            print(f"{time.strftime('%d.%m %H:%M:%S')} [push] "
-                  f"{data.get('usage_status')} block={data.get('block_pct')}% "
-                  f"week={data.get('week_pct')}% "
-                  f"tokens={data.get('tokens_today')}")
-        except Exception as e:
-            print(f"[push] не получилось: {e}")
-        time.sleep(PUSH_EVERY_SEC)
+        busy = token_agent._claude_busy()
+        with lock:
+            fresh = latest.pop("_fresh", False)
+            data = dict(latest)
+        if data and (fresh or busy != sent_busy):
+            data["busy"] = busy
+            try:
+                push(broker, data)
+                sent_busy = busy
+                print(f"{time.strftime('%d.%m %H:%M:%S')} [push] "
+                      f"{data.get('usage_status')} block={data.get('block_pct')}% "
+                      f"week={data.get('week_pct')}% busy={busy}")
+            except Exception as e:
+                print(f"[push] не получилось: {e}")
+        time.sleep(BUSY_CHECK_SEC)
 
 
 if __name__ == "__main__":

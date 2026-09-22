@@ -35,7 +35,7 @@
 |---|---|---|
 | % 5-часового блока, % недели, время до сброса | `api.anthropic.com/api/oauth/usage` — те же цифры, что `/usage` в Claude Code | отправщик, `agent/claude_limits.py` |
 | Токены и стоимость за день | локальные журналы Claude Code через [ccusage](https://github.com/ryoppippi/ccusage) | отправщик, на каждой машине свои |
-| «Claude работает» | время последней записи в `~/.claude/projects/*.jsonl` | отправщик |
+| THINKING в шапке, вращение логотипа | последняя запись журнала сессии в `~/.claude/projects/*.jsonl`: ход идёт или Claude уже ответил | отправщик, проверка раз в 3 с |
 | Почта, задачи Tracker и Jira | IMAP | magic-qube |
 | Баланс и расходы polza.ai | API polza.ai | magic-qube |
 | Часы, погода, рассвет и закат | open-meteo | magic-qube |

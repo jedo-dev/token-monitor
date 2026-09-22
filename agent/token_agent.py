@@ -28,8 +28,9 @@ WEEKLY_COST_LIMIT_USD = float(os.environ.get("TM_WEEK_LIMIT_USD", "140"))
 LAT = float(os.environ.get("TM_LAT", "55.75"))
 LON = float(os.environ.get("TM_LON", "37.62"))
 
-# Считаем ассистента "работающим", если в логах есть запись за последние N секунд
-BUSY_WINDOW_SEC = 90
+# Сессии старше этого не смотрим: оборванный ход не должен «работать» вечно
+BUSY_HORIZON_SEC = 15 * 60
+BUSY_TAIL_BYTES = 256 * 1024     # хватает на последние записи даже с большим выводом
 
 _lock = threading.Lock()
 _stats = {
@@ -70,23 +71,66 @@ def _fetch_weather():
         return _weather["data"]
 
 
+def _session_busy(path):
+    """Идёт ли ход в этой сессии — по последней записи разговора.
+
+    assistant + stop_reason tool_use → работает инструмент, ход продолжается;
+    assistant + end_turn или финальный текст → Claude ответил и ждёт человека;
+    user (запрос или результат инструмента) → Claude думает над ответом.
+    Служебные записи (заголовок, режим и т. п.) пропускаем.
+    """
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            f.seek(max(0, f.tell() - BUSY_TAIL_BYTES))
+            tail = f.read().decode("utf-8", errors="ignore")
+    except OSError:
+        return False
+
+    for line in reversed(tail.splitlines()):
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue                 # первая строка хвоста обычно обрезана
+        kind = rec.get("type")
+        if kind == "assistant":
+            msg = rec.get("message") or {}
+            reason = msg.get("stop_reason")
+            if reason is not None:
+                return reason == "tool_use"
+            # Причина ещё не записана. Текст — это финальный ответ (его блок
+            # пишется до того, как известна причина остановки), а
+            # размышление или вызов инструмента — ход продолжается.
+            blocks = msg.get("content") or []
+            kinds = {b.get("type") for b in blocks if isinstance(b, dict)}
+            return "text" not in kinds
+        if kind == "user":
+            return "Request interrupted by user" not in line
+    return False
+
+
 def _claude_busy():
-    """Есть ли активность Claude Code прямо сейчас — по времени изменения
-    файлов сессий в ~/.claude/projects."""
+    """Работает ли Claude Code прямо сейчас — в CLI или в десктоп-приложении.
+    Смотрим сессии, тронутые за последние BUSY_HORIZON_SEC: долгая сборка
+    журнал не пишет, но ход при этом не закончен."""
     root = os.path.expanduser("~/.claude/projects")
-    newest = 0.0
+    now = time.time()
     try:
         for dirpath, _dirs, files in os.walk(root):
             for name in files:
-                if name.endswith(".jsonl"):
-                    try:
-                        newest = max(newest, os.path.getmtime(
-                            os.path.join(dirpath, name)))
-                    except OSError:
-                        pass
+                if not name.endswith(".jsonl"):
+                    continue
+                path = os.path.join(dirpath, name)
+                try:
+                    if now - os.path.getmtime(path) > BUSY_HORIZON_SEC:
+                        continue
+                except OSError:
+                    continue
+                if _session_busy(path):
+                    return True
     except OSError:
-        return False
-    return (time.time() - newest) < BUSY_WINDOW_SEC
+        pass
+    return False
 
 
 def _load_calibration():
