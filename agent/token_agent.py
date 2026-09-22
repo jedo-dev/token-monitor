@@ -279,9 +279,12 @@ def _collect(include_weather=True):
     now = datetime.now(timezone.utc)
     out = {}
 
-    # --- точные квоты из API Anthropic (как в /usage Claude Code) ---
-    api = _fetch_api_usage() or {}
-    out.update(api)
+    # --- точные лимиты подписки (как в /usage), см. claude_limits.py ---
+    import claude_limits
+    limits = claude_limits.get()
+    out["usage_status"] = limits.get("usage_status", "unavailable")
+    if out["usage_status"] == "ok":
+        out.update(limits)
 
     # --- 5-часовой блок (эвристика ccusage — только если API недоступен) ---
     blocks = _run_ccusage(["blocks"]) or {}

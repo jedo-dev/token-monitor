@@ -5,6 +5,7 @@
 /* Snapshot of everything the screen shows. Filled by net.c from the agent. */
 typedef struct {
     bool  usage_ok;        /* пришёл ли расход Claude Code с ПК */
+    char  usage_status[16];/* ok | token_expired | no_token | unavailable */
     int   block_pct;
     int   reset_min;
     int   week_pct;

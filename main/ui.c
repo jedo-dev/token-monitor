@@ -994,7 +994,16 @@ void token_ui_set_live(const token_data_t *d)
         /* ПК не присылает статистику — честно показываем это вместо старых цифр */
         lv_label_set_text(g_session.pct, "--");
         lv_label_set_text(g_week.pct, "--");
-        lv_label_set_text(g_session.reset, "нет данных с ПК");
+        /* подсказываем, что сделать, а не просто «нет данных» */
+        const char *why = "нет данных с ПК";
+        if (strcmp(d->usage_status, "token_expired") == 0) {
+            why = "Токен истёк: запустите claude";
+        } else if (strcmp(d->usage_status, "no_token") == 0) {
+            why = "Нет входа: claude /login";
+        } else if (strcmp(d->usage_status, "unavailable") == 0) {
+            why = "Anthropic не отвечает";
+        }
+        lv_label_set_text(g_session.reset, why);
         lv_label_set_text(g_week.reset, "");
         lv_bar_set_value(g_session.bar, 0, LV_ANIM_OFF);
         lv_bar_set_value(g_week.bar, 0, LV_ANIM_OFF);

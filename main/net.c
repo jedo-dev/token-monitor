@@ -152,7 +152,11 @@ static bool poll_agent(void)
                прийти (ПК выключен), но почта и polza.ai уже есть. */
             if (root) {
                 token_data_t d = {0};
-                d.usage_ok = cJSON_IsNumber(cJSON_GetObjectItem(usage, "block_pct"));
+                json_str(usage, "usage_status", d.usage_status,
+                         sizeof(d.usage_status));
+                /* цифрам верим, только если агент получил их от Anthropic */
+                d.usage_ok = cJSON_IsNumber(cJSON_GetObjectItem(usage, "block_pct")) &&
+                             (!d.usage_status[0] || strcmp(d.usage_status, "ok") == 0);
                 d.block_pct      = (int)json_num(usage, "block_pct", 0);
                 d.reset_min      = (int)json_num(usage, "reset_min", 0);
                 d.week_pct       = (int)json_num(usage, "week_pct", 0);
