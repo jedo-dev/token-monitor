@@ -93,6 +93,12 @@ def _session_busy(path):
         except ValueError:
             continue                 # первая строка хвоста обычно обрезана
         kind = rec.get("type")
+        if kind not in ("assistant", "user"):
+            continue
+        # CLI дописывает служебные строки и в давно закрытые сессии, и файл
+        # выглядит свежим. Решает время самой записи разговора, а не файла.
+        if _record_age(rec) > BUSY_HORIZON_SEC:
+            return False
         if kind == "assistant":
             msg = rec.get("message") or {}
             reason = msg.get("stop_reason")
@@ -104,9 +110,31 @@ def _session_busy(path):
             blocks = msg.get("content") or []
             kinds = {b.get("type") for b in blocks if isinstance(b, dict)}
             return "text" not in kinds
-        if kind == "user":
-            return "Request interrupted by user" not in line
+        if rec.get("isMeta") or _is_local_command(rec):
+            return False             # /login, /model и т. п. — модель не работает
+        return "Request interrupted by user" not in line
     return False
+
+
+def _is_local_command(rec):
+    content = (rec.get("message") or {}).get("content")
+    if isinstance(content, list):
+        content = " ".join(b.get("text", "") for b in content
+                           if isinstance(b, dict) and b.get("type") == "text")
+    return isinstance(content, str) and content.lstrip().startswith(
+        ("<local-command", "<command-name>", "<command-message>"))
+
+
+def _record_age(rec):
+    """Сколько секунд назад сделана запись; без метки времени — считаем свежей."""
+    ts = rec.get("timestamp")
+    if not ts:
+        return 0
+    try:
+        when = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except ValueError:
+        return 0
+    return time.time() - when.timestamp()
 
 
 def _claude_busy():
