@@ -10,3 +10,6 @@ presets
 presets/
 ./presets/*
 agent/limits_cache.json
+agent/pusher.json
+agent/pusher.log
+agent/__pycache__/

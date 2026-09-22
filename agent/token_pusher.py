@@ -20,11 +20,27 @@ import token_agent  # переиспользуем сбор статистики
 PUSH_EVERY_SEC = 30
 
 
+HERE = os.path.dirname(os.path.abspath(__file__))
+CONFIG_FILE = os.path.join(HERE, "pusher.json")   # пишет install-pusher-autostart.ps1
+LOG_FILE = os.path.join(HERE, "pusher.log")
+LOG_MAX_BYTES = 1_000_000
+
+
+def config():
+    try:
+        return json.load(open(CONFIG_FILE, encoding="utf-8-sig"))  # PowerShell пишет с BOM
+    except (OSError, ValueError):
+        return {}
+
+
 def api_key():
-    """Ключ magic-qube: из TM_API_KEY либо из main/secrets.h, чтобы не
-    держать его в двух местах. В лог не пишется."""
+    """Ключ magic-qube: TM_API_KEY, затем agent/pusher.json, затем
+    main/secrets.h (на основном ПК, чтобы не держать ключ дважды).
+    В лог не пишется."""
     if os.environ.get("TM_API_KEY"):
         return os.environ["TM_API_KEY"].strip()
+    if config().get("api_key"):
+        return config()["api_key"]
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                         "..", "main", "secrets.h")
     try:
@@ -51,8 +67,24 @@ def push(broker, payload):
         return r.status == 200
 
 
+def _log_to_file():
+    """Под pythonw консоли нет: пишем в agent/pusher.log, чтобы было
+    по чему разбираться. Большой лог обрезаем при старте."""
+    try:
+        if os.path.getsize(LOG_FILE) > LOG_MAX_BYTES:
+            os.remove(LOG_FILE)
+    except OSError:
+        pass
+    log = open(LOG_FILE, "a", encoding="utf-8", buffering=1)
+    sys.stdout = sys.stderr = log
+
+
 def main():
-    broker = os.environ.get("TM_BROKER", "http://raspberrypi.local:8765")
+    if sys.stdout is None or "--log" in sys.argv:
+        _log_to_file()
+
+    broker = (os.environ.get("TM_BROKER") or config().get("broker")
+              or "http://raspberrypi.local:8765")
     if "--broker" in sys.argv:
         broker = sys.argv[sys.argv.index("--broker") + 1]
 
@@ -65,7 +97,8 @@ def main():
             data = token_agent._collect(include_weather=False)
             data["host"] = host
             push(broker, data)
-            print(f"[push] block={data.get('block_pct')}% "
+            print(f"{time.strftime('%d.%m %H:%M:%S')} [push] "
+                  f"{data.get('usage_status')} block={data.get('block_pct')}% "
                   f"week={data.get('week_pct')}% "
                   f"tokens={data.get('tokens_today')}")
         except Exception as e:

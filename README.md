@@ -1,25 +1,212 @@
 # Token Monitor
 
-Настольный дисплей на базе **Waveshare ESP32-S3-Touch-LCD-4 (Rev 4.0, 480×480)** для
-отслеживания использования токенов ИИ-ассистентов (Claude Code).
+Настольный дисплей на **Waveshare ESP32-S3-Touch-LCD-4 (Rev 4.0, 480×480)**:
+лимиты подписки Claude, баланс polza.ai и почта — на отдельном экране у рабочего
+места. Всё ходит по домашней сети, наружу уходят только запросы к самим сервисам.
 
-Вдохновлён проектом Token Monitor:
-https://cnx-software.ru/2026/08/10/token-monitor-nastolnyj-displej-na-baze-esp32-s3-dlya-otslezhivaniya-ispolzovaniya-ii-assistentov-dlya-programmirovaniya-kraudfanding/
+Идея подсмотрена у [Token Monitor](https://cnx-software.ru/2026/08/10/token-monitor-nastolnyj-displej-na-baze-esp32-s3-dlya-otslezhivaniya-ispolzovaniya-ii-assistentov-dlya-programmirovaniya-kraudfanding/)
+и [ClawdMeter](https://github.com/HermannBjorgvin/Clawdmeter), код свой.
 
-## Стек
+## Как это устроено
 
-- ESP-IDF v5.5 + LVGL 9
-- BSP-компонент `waveshare/esp32_s3_touch_lcd_4` (драйверы ST7701, GT911, подсветка)
-
-## Сборка и прошивка
-
-```bash
-idf.py build
-idf.py -p COM7 flash monitor
+```
+ ПК (Claude Code)          ноутбук (Claude Code)
+ token_pusher.py           token_pusher.py
+        │                         │
+        │   POST /display/ingest  │      раз в 30 секунд, с каждой машины
+        └────────────┬────────────┘
+                     ▼
+     magic-qube на Orange Pi (всегда включён)   ◄── IMAP-ящики, polza.ai, погода
+                     │
+                     │   GET /display/state     раз в 3 секунды
+                     ▼
+            ESP32-S3 + экран 480×480
 ```
 
-## Статус
+На каждой машине, где вы работаете с Claude Code, крутится маленький
+**отправщик** (`agent/token_pusher.py`). Он собирает лимиты и расход и отдаёт их
+**magic-qube** — сервису на Orange Pi, который работает круглосуточно. Дисплей
+ходит только к magic-qube, поэтому живёт, даже когда компьютеры выключены: тогда
+он показывает последние цифры.
 
-- [x] Каркас проекта, UI с демо-данными (шкала 5h-блока, токены/стоимость за день, недельный лимит)
-- [ ] Wi-Fi + получение реальных данных со скрипта на ПК (ccusage)
-- [ ] Настройки, ночной режим, тач-жесты
+### Откуда какие данные
+
+| На экране | Источник | Где считается |
+|---|---|---|
+| % 5-часового блока, % недели, время до сброса | `api.anthropic.com/api/oauth/usage` — те же цифры, что `/usage` в Claude Code | отправщик, `agent/claude_limits.py` |
+| Токены и стоимость за день | локальные журналы Claude Code через [ccusage](https://github.com/ryoppippi/ccusage) | отправщик, на каждой машине свои |
+| «Claude работает» | время последней записи в `~/.claude/projects/*.jsonl` | отправщик |
+| Почта, задачи Tracker и Jira | IMAP | magic-qube |
+| Баланс и расходы polza.ai | API polza.ai | magic-qube |
+| Часы, погода, рассвет и закат | open-meteo | magic-qube |
+
+### Лимиты Claude подробнее
+
+Запрос к `/api/oauth/usage` — это чтение: **токены не тратятся и новый
+5-часовой блок не открывается**. Для него нужен OAuth-токен подписки, который
+Claude Code кладёт в `~/.claude/.credentials.json` после входа через `claude
+/login`.
+
+Когда отправщик спрашивает Anthropic:
+- после вашей активности в Claude Code (CLI или десктоп-приложение пишут в
+  одни и те же журналы) — **не чаще раза в минуту**;
+- в простое — **раз в 10 минут**: лимиты общие с claude.ai и телефоном, а их
+  активность по локальным журналам не видна.
+
+Между запросами время до сброса пересчитывается локально, а когда окно
+сбросилось — показывается 0%.
+
+**Токен сам не обновляется.** Он живёт около 8 часов, продлевает его только CLI
+при запуске. Десктоп-приложение этого не делает. Когда токен протухнет, на
+экране вместо процентов появится «Токен истёк: запустите claude» — достаточно
+выполнить `claude` в терминале (под VPN) и выйти.
+
+### Несколько машин
+
+Каждая машина шлёт свой пакет с именем компьютера, magic-qube сводит их:
+
+- **Лимиты** общие на аккаунт — берутся с машины с самыми свежими данными
+  **и рабочим токеном**. Протухший токен на ноутбуке не испортит цифры с ПК.
+- **Токены и стоимость за день** складываются: каждая машина знает только свои
+  журналы.
+- **«Claude работает»** — если работает хоть одна машина.
+- Машина, молчащая больше 5 минут, в сводку не входит, больше суток — забывается.
+
+## Экран
+
+Четыре страницы, листаются свайпом:
+
+1. **Лимиты** — Session и Weekly: процент, полоса, время до сброса. Цвет
+   меняется с зелёного на оранжевый после 70% и на красный после 90%.
+2. **polza.ai** — баланс, траты и запросы за сегодня, расходы по дням.
+3. **Почта** — вкладки по ящикам, список непрочитанных. 👁 открывает письмо и
+   помечает его прочитанным в самом ящике, 🗑 у Tracker и Jira удаляет задачу.
+4. **Настройки** — яркость.
+
+Шапка: часы и дата, рассвет и закат, температура, заряд батареи. Внизу —
+`LIVE`, пока magic-qube отвечает, и `OFFLINE`, если связь пропала.
+
+Если вместо процентов текст — это подсказка, что сделать:
+
+| Текст | Что значит |
+|---|---|
+| Токен истёк: запустите claude | запустите `claude` в терминале под VPN |
+| Нет входа: claude /login | на машине не выполнен вход по подписке |
+| Anthropic не отвечает | нет связи с api.anthropic.com — проверьте VPN |
+| нет данных с ПК | ни одна машина не присылала данные последние 5 минут |
+
+## Установка на новую машину (ПК, ноутбук)
+
+Нужно на каждом компьютере, где вы работаете с Claude Code и хотите, чтобы
+его расход учитывался.
+
+**1. Программы.**
+- Python 3.11 или новее.
+- Node.js 20 или новее — для подсчёта токенов за день через ccusage. Без него
+  лимиты всё равно будут работать.
+- Claude Code CLI.
+- VPN-клиент. Anthropic не обслуживает российские IP: без VPN вход и запросы к
+  лимитам получают `403`.
+
+**2. Вход в Claude по подписке.** Включите VPN в режиме **TUN** (в режиме
+«Прокси» терминальные программы идут мимо VPN), затем:
+
+```bash
+claude
+```
+
+Внутри — `/login`, выберите вход через аккаунт Claude и вставьте код из
+браузера. Проверить, что токен появился:
+
+```bash
+python -c "import json,os;print('claudeAiOauth' in json.load(open(os.path.expanduser('~/.claude/.credentials.json'))))"
+```
+
+Должно вывести `True`. После входа VPN можно вернуть в режим «Прокси»:
+отправщик сам найдёт прокси на `127.0.0.1:10809`. Если у вас другой адрес,
+задайте переменную `TM_PROXY`.
+
+**3. Код отправщика.** Скопируйте на машину папки `agent/` и `deploy/` из этого
+репозитория, сохранив их рядом, например в `C:\token-monitor\`. Остальное не
+нужно.
+
+**4. Автозапуск.** Ключ magic-qube — значение `API_KEY` из его `.env`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File C:\token-monitor\deploy\install-pusher-autostart.ps1 -Broker http://192.168.50.167:4715 -ApiKey <ключ>
+```
+
+Скрипт сохранит настройки в `agent\pusher.json`, создаст задачу
+`TokenMonitorPusher`, которая стартует при входе в Windows и перезапускается при
+падении, и сразу её запустит. На основном ПК `-ApiKey` можно не указывать —
+ключ берётся из `main/secrets.h`.
+
+**5. Проверка.** Через минуту в `agent\pusher.log` должны идти строки вида:
+
+```
+22.09 23:04:13 [push] ok block=27% week=15% tokens=39907348
+```
+
+Удалить автозапуск:
+
+```powershell
+Unregister-ScheduledTask -TaskName TokenMonitorPusher -Confirm:$false
+```
+
+На macOS и Linux отправщик запускается так же, `python3 agent/token_pusher.py
+--broker http://192.168.50.167:4715`, ключ — через переменную `TM_API_KEY`;
+для автозапуска подойдёт `launchd` или `systemd --user`.
+
+## Прошивка дисплея
+
+`main/secrets.h` (в `.gitignore`, шаблон — `secrets.h.example`):
+
+```c
+#define WIFI_SSID  "..."        // только 2.4 ГГц
+#define WIFI_PASS  "..."
+#define AGENT_URL  "http://192.168.50.167:4715/display/state"
+#define API_KEY    "..."        // ключ magic-qube
+#define AI_API_KEY "..."        // polza.ai
+```
+
+Сборка: ESP-IDF v5.5.1 и LVGL 9.5 (подключён локально через `override_path`).
+Из Git Bash `export.bat` не работает — он проверяет переменную `MSYSTEM`, —
+поэтому окружение поднимается через PowerShell:
+
+```bash
+powershell -NoProfile -Command "Remove-Item Env:MSYSTEM -EA SilentlyContinue; $env:IDF_PATH='D:\esp\esp-idf'; & 'D:\esp\esp-idf\export.ps1' | Out-Null; idf.py build"
+```
+
+Прошивка приложения, BOOT и RST зажимать не нужно:
+
+```bash
+python -m esptool --chip esp32s3 --port COM7 -b 921600 write-flash 0x10000 build/token_monitor.bin
+```
+
+Откат на фабричную прошивку — образ целиком по адресу `0x0` из
+`../firmware/v4_repo/firmware/`.
+
+## Если что-то не так
+
+| Симптом | Куда смотреть |
+|---|---|
+| На экране `OFFLINE` | доступен ли magic-qube: `curl http://192.168.50.167:4715/health` |
+| «нет данных с ПК» | запущен ли отправщик: `Get-ScheduledTask TokenMonitorPusher`, лог `agent\pusher.log` |
+| В логе `getaddrinfo failed` | неверный адрес брокера в `agent\pusher.json` |
+| В логе `HTTP 401` при отправке | неверный `API_KEY` magic-qube |
+| «Токен истёк» не проходит после `claude` | CLI запущен без VPN и не смог обновить токен — включите TUN |
+| Проценты не совпадают с `/usage` | не должны расходиться: это один источник. Проверьте, какая машина прислала данные — поле `host` в `/display/state` |
+
+## Структура
+
+```
+main/     прошивка: ui.c — страницы, net.c — Wi-Fi и HTTP, battery.c, fonts/ — кириллица
+agent/    token_pusher.py — отправщик, claude_limits.py — лимиты Claude,
+          token_agent.py — сбор статистики и ccusage, polza.py
+deploy/   install-pusher-autostart.ps1 — автозапуск отправщика на Windows
+case/     корпус: OpenSCAD и STL
+```
+
+Серверная часть — отдельный репозиторий `magic-qube-dashboard-integration`:
+`displayService` сводит данные машин и отдаёт дисплею, `mailReaderService` —
+почта, `polzaService` — polza.ai.

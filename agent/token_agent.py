@@ -260,8 +260,10 @@ def _run_ccusage(args):
     """Запустить ccusage через npx, вернуть распарсенный JSON или None."""
     cmd = ["npx", "-y", "ccusage@latest"] + args + ["--json"]
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True,
-                           timeout=120, shell=(os.name == "nt"))
+        # в фоне (pythonw) каждый вызов через cmd открывал бы окно консоли
+        flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=120,
+                           shell=(os.name == "nt"), creationflags=flags)
         if r.returncode != 0:
             print(f"[ccusage] {' '.join(args)} rc={r.returncode}: {r.stderr[:200]}")
             return None
