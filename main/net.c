@@ -64,55 +64,49 @@ static double json_num(cJSON *root, const char *key, double dflt)
    3 секунды фрагментирует кучу. */
 static char *s_resp;
 
-static void parse_mail(cJSON *root)
+/* Экрану нужны только интеграции трекеров (у них tasks = true):
+   ключ и название задачи. Обычная почта на дашборде не показывается. */
+static void parse_tasks(cJSON *root)
 {
     cJSON *boxes = cJSON_GetObjectItem(root, "mailboxes");
     if (!cJSON_IsArray(boxes)) {
         return;
     }
 
-    mailbox_t *list = calloc(MAIL_MAX_BOXES, sizeof(mailbox_t));
-    if (!list) {
+    task_list_t *lists = calloc(TASK_MAX_LISTS, sizeof(task_list_t));
+    if (!lists) {
         return;
     }
 
     int n = 0;
     cJSON *box;
     cJSON_ArrayForEach(box, boxes) {
-        if (n >= MAIL_MAX_BOXES) break;
-        mailbox_t *dst = &list[n];
+        if (n >= TASK_MAX_LISTS) break;
+        if (!cJSON_IsTrue(cJSON_GetObjectItem(box, "tasks"))) {
+            continue;
+        }
+        task_list_t *dst = &lists[n++];
         json_str(box, "id", dst->id, sizeof(dst->id));
         json_str(box, "label", dst->label, sizeof(dst->label));
-        dst->unread = (int)json_num(box, "unread", 0);
-        dst->tasks = cJSON_IsTrue(cJSON_GetObjectItem(box, "tasks"));
+        dst->total = (int)json_num(box, "unread", 0);
 
         cJSON *msgs = cJSON_GetObjectItem(box, "messages");
-        if (cJSON_IsArray(msgs)) {
-            cJSON *m;
-            cJSON_ArrayForEach(m, msgs) {
-                if (dst->count >= MAIL_MAX_ITEMS) break;
-                /* прочитанные письма не показываем; у задач трекера
-                   seen всегда true, их пропускать нельзя */
-                if (!dst->tasks && cJSON_IsTrue(cJSON_GetObjectItem(m, "seen"))) {
-                    continue;
-                }
-                mail_item_t *it = &dst->items[dst->count];
-                json_str(m, "uid", it->uid, sizeof(it->uid));
-                json_str(m, "from", it->from, sizeof(it->from));
-                json_str(m, "subject", it->subject, sizeof(it->subject));
-                json_str(m, "when", it->when, sizeof(it->when));
-                json_str(m, "task", it->task, sizeof(it->task));
-                it->seen = cJSON_IsTrue(cJSON_GetObjectItem(m, "seen"));
+        cJSON *m;
+        cJSON_ArrayForEach(m, msgs) {
+            if (dst->count >= TASK_MAX_ITEMS) break;
+            task_item_t *it = &dst->items[dst->count];
+            json_str(m, "task", it->key, sizeof(it->key));
+            json_str(m, "subject", it->title, sizeof(it->title));
+            if (it->key[0]) {
                 dst->count++;
             }
         }
-        n++;
     }
 
     bsp_display_lock(0);
-    token_ui_set_mail(list, n);
+    token_ui_set_tasks(lists, n);
     bsp_display_unlock();
-    free(list);
+    free(lists);
 }
 
 static bool poll_agent(void)
@@ -161,10 +155,13 @@ static bool poll_agent(void)
                 d.reset_min      = (int)json_num(usage, "reset_min", 0);
                 d.week_pct       = (int)json_num(usage, "week_pct", 0);
                 d.week_reset_min = (int)json_num(usage, "week_reset_min", 0);
-                d.tokens_today   = (long)json_num(usage, "tokens_today", 0);
-                d.cost_usd       = json_num(usage, "cost_today_usd", 0);
-                d.temp_c         = json_num(root, "temp_c", 0);
                 d.busy = cJSON_IsTrue(cJSON_GetObjectItem(usage, "busy"));
+
+                d.weather_ok   = cJSON_IsNumber(cJSON_GetObjectItem(root, "temp_c"));
+                d.temp_c       = json_num(root, "temp_c", 0);
+                d.weather_code = (int)json_num(root, "weather_code", -1);
+                /* без признака дня считаем, что день: солнце вместо луны */
+                d.is_day = json_num(root, "is_day", 1) != 0;
                 json_str(root, "sunrise", d.sunrise, sizeof(d.sunrise));
                 json_str(root, "sunset", d.sunset, sizeof(d.sunset));
                 json_str(root, "time", d.time, sizeof(d.time));
@@ -172,54 +169,15 @@ static bool poll_agent(void)
 
                 cJSON *pz = cJSON_GetObjectItem(root, "polza");
                 if (cJSON_IsObject(pz)) {
-                    d.polza_ok         = true;
-                    d.polza_balance    = json_num(pz, "balance_rub",
-                                         json_num(pz, "balanceRub", 0));
-                    d.polza_today      = json_num(pz, "spent_today_rub",
-                                         json_num(pz, "spentTodayRub", 0));
-                    d.polza_reqs_today = (int)json_num(pz, "requests_today",
-                                         json_num(pz, "requestsToday", 0));
-                    d.polza_reqs_total = (int)json_num(pz, "requests_total",
-                                         json_num(pz, "requestsTotal", 0));
-                    d.polza_errors     = (int)json_num(pz, "errors", 0);
-                    json_str(pz, "top_model", d.polza_top_model,
-                             sizeof(d.polza_top_model));
-                    json_str(pz, "topModel", d.polza_top_model,
-                             sizeof(d.polza_top_model));
-
-                    cJSON *ph = cJSON_GetObjectItem(pz, "history");
-                    if (cJSON_IsArray(ph)) {
-                        int n = cJSON_GetArraySize(ph);
-                        int skip = n > 7 ? n - 7 : 0;
-                        for (int i = skip; i < n; i++) {
-                            cJSON *day = cJSON_GetArrayItem(ph, i);
-                            int k = d.polza_hist_len;
-                            d.polza_hist_cost[k] = json_num(day, "c", 0);
-                            json_str(day, "d", d.polza_hist_label[k],
-                                     sizeof(d.polza_hist_label[k]));
-                            d.polza_hist_len++;
-                        }
-                    }
-                }
-
-                cJSON *hist = cJSON_GetObjectItem(root, "history");
-                if (cJSON_IsArray(hist)) {
-                    int n = cJSON_GetArraySize(hist);
-                    int skip = n > 7 ? n - 7 : 0;   /* keep the newest 7 */
-                    for (int i = skip; i < n; i++) {
-                        cJSON *day = cJSON_GetArrayItem(hist, i);
-                        int k = d.hist_len;
-                        d.hist_tokens[k] = (long)json_num(day, "t", 0);
-                        json_str(day, "d", d.hist_label[k],
-                                 sizeof(d.hist_label[k]));
-                        d.hist_len++;
-                    }
+                    d.polza_ok      = true;
+                    d.polza_balance = json_num(pz, "balance_rub",
+                                      json_num(pz, "balanceRub", 0));
                 }
 
                 bsp_display_lock(0);
                 token_ui_set_live(&d);
                 bsp_display_unlock();
-                parse_mail(root);
+                parse_tasks(root);
                 ok = true;
             }
             cJSON_Delete(root);
@@ -230,89 +188,18 @@ static bool poll_agent(void)
     return ok;
 }
 
-/* ---- on-demand message body ---- */
-
-typedef enum { REQ_BODY, REQ_DELETE_TASK } mail_req_kind_t;
+/* ---- удаление задач: запрос уходит из отдельной задачи, чтобы не
+   блокировать интерфейс ---- */
 
 typedef struct {
-    mail_req_kind_t kind;
-    char box_id[32];
-    char uid[16];       /* uid письма либо ключ задачи */
-} mail_req_t;
+    char list_id[32];
+    char key[16];
+} task_req_t;
 
-static QueueHandle_t s_mail_q;
-
-/* Build ".../display/mail/<box>/<uid>" from the configured state URL. */
-static void build_mail_url(char *out, size_t n, const mail_req_t *req)
-{
-    const char *base = AGENT_URL;
-    const char *tail = strstr(base, "/display/state");
-    if (!tail) {
-        tail = strstr(base, "/stats");
-    }
-    size_t prefix = tail ? (size_t)(tail - base) : strlen(base);
-    if (prefix >= n) {
-        prefix = n - 1;
-    }
-    memcpy(out, base, prefix);
-    out[prefix] = '\0';
-    snprintf(out + prefix, n - prefix, "/display/mail/%s/%s",
-             req->box_id, req->uid);
-}
-
-static void fetch_body(const mail_req_t *req)
-{
-    char url[192];
-    build_mail_url(url, sizeof(url), req);
-
-    char *buf = s_resp;
-    if (!buf) {
-        return;
-    }
-
-    esp_http_client_config_t cfg = {
-        .url = url,
-        .timeout_ms = 8000,
-    };
-    esp_http_client_handle_t cl = esp_http_client_init(&cfg);
-    if (!cl) {
-        return;
-    }
-#ifdef API_KEY
-    esp_http_client_set_header(cl, "x-api-key", API_KEY);
-#endif
-
-    const char *text = NULL;
-    cJSON *root = NULL;
-
-    if (esp_http_client_open(cl, 0) == ESP_OK) {
-        esp_http_client_fetch_headers(cl);
-        int len = esp_http_client_read_response(cl, buf, RESP_MAX - 1);
-        if (len > 0 && esp_http_client_get_status_code(cl) == 200) {
-            buf[len] = '\0';
-            root = cJSON_Parse(buf);
-            cJSON *t = root ? cJSON_GetObjectItem(root, "text") : NULL;
-            if (cJSON_IsString(t)) {
-                text = t->valuestring;
-            }
-        }
-        esp_http_client_close(cl);
-    }
-    esp_http_client_cleanup(cl);
-
-    bsp_display_lock(0);
-    token_ui_show_message(NULL, NULL, NULL,
-                          text ? text : "Не удалось загрузить письмо");
-    if (text) {
-        token_ui_mark_seen(req->box_id, req->uid);
-    }
-    bsp_display_unlock();
-
-    cJSON_Delete(root);
-}
+static QueueHandle_t s_task_q;
 
 /* DELETE /display/task/<box>/<taskKey> — снимает задачу из Mongo. */
-static void delete_task(const mail_req_t *req)
+static void delete_task(const task_req_t *req)
 {
     char url[192];
     const char *base = AGENT_URL;
@@ -324,7 +211,7 @@ static void delete_task(const mail_req_t *req)
     memcpy(url, base, prefix);
     url[prefix] = '\0';
     snprintf(url + prefix, sizeof(url) - prefix, "/display/task/%s/%s",
-             req->box_id, req->uid);
+             req->list_id, req->key);
 
     esp_http_client_config_t cfg = {
         .url = url,
@@ -346,46 +233,34 @@ static void delete_task(const mail_req_t *req)
         esp_http_client_close(cl);
     }
     esp_http_client_cleanup(cl);
-    ESP_LOGI(TAG, "delete task %s: %s", req->uid, ok ? "ok" : "failed");
+    ESP_LOGI(TAG, "delete task %s: %s", req->key, ok ? "ok" : "failed");
 
     bsp_display_lock(0);
     if (ok) {
-        token_ui_remove_task(req->box_id, req->uid);
+        token_ui_remove_task(req->list_id, req->key);
     } else {
         token_ui_toast("Не удалось удалить", false);
     }
     bsp_display_unlock();
 }
 
-static void mail_task(void *arg)
+static void task_worker(void *arg)
 {
-    mail_req_t req;
+    task_req_t req;
     for (;;) {
-        if (xQueueReceive(s_mail_q, &req, portMAX_DELAY) == pdTRUE) {
-            if (req.kind == REQ_DELETE_TASK) {
-                delete_task(&req);
-            } else {
-                fetch_body(&req);
-            }
+        if (xQueueReceive(s_task_q, &req, portMAX_DELAY) == pdTRUE) {
+            delete_task(&req);
         }
     }
 }
 
-/* Called from the LVGL thread — must not block. */
-static void on_mail_open(const char *box_id, const char *uid)
+/* Вызывается из потока LVGL — блокировать нельзя. */
+static void on_task_delete_req(const char *list_id, const char *key)
 {
-    mail_req_t req = { .kind = REQ_BODY };
-    strlcpy(req.box_id, box_id, sizeof(req.box_id));
-    strlcpy(req.uid, uid, sizeof(req.uid));
-    xQueueSend(s_mail_q, &req, 0);
-}
-
-static void on_task_delete_req(const char *box_id, const char *task_key)
-{
-    mail_req_t req = { .kind = REQ_DELETE_TASK };
-    strlcpy(req.box_id, box_id, sizeof(req.box_id));
-    strlcpy(req.uid, task_key, sizeof(req.uid));
-    xQueueSend(s_mail_q, &req, 0);
+    task_req_t req = {0};
+    strlcpy(req.list_id, list_id, sizeof(req.list_id));
+    strlcpy(req.key, key, sizeof(req.key));
+    xQueueSend(s_task_q, &req, 0);
 }
 
 static void poll_task(void *arg)
@@ -436,10 +311,9 @@ void net_start(void)
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta));
     ESP_ERROR_CHECK(esp_wifi_start());
 
-    s_mail_q = xQueueCreate(2, sizeof(mail_req_t));
-    token_ui_set_mail_open_cb(on_mail_open);
+    s_task_q = xQueueCreate(2, sizeof(task_req_t));
     token_ui_set_task_delete_cb(on_task_delete_req);
 
     xTaskCreate(poll_task, "agent_poll", 6144, NULL, 5, NULL);
-    xTaskCreate(mail_task, "mail_body", 6144, NULL, 5, NULL);
+    xTaskCreate(task_worker, "task_delete", 6144, NULL, 5, NULL);
 }
