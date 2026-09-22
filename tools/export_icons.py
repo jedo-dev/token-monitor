@@ -62,7 +62,7 @@ WEATHER = {
 }
 
 SMALL = {
-    # восход/закат и крестик — из макета без изменений
+    # восход и закат — из макета без изменений
     "sunrise": ('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" '
                 f'fill="none" stroke="{MUTED}" stroke-width="1.5" stroke-linecap="round" '
                 'stroke-linejoin="round"><path d="M1.5 13.5h13M4.5 13.5a3.5 3.5 0 0 1 7 0M8 2v5"/>'
@@ -71,9 +71,10 @@ SMALL = {
                 f'fill="none" stroke="{MUTED}" stroke-width="1.5" stroke-linecap="round" '
                 'stroke-linejoin="round"><path d="M1.5 13.5h13M4.5 13.5a3.5 3.5 0 0 1 7 0M8 2v5"/>'
                 '<path d="M5.5 4.5 8 7l2.5-2.5"/></svg>'),
-    "close":   ('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" '
-                f'fill="none" stroke="{MUTED}" stroke-width="2" stroke-linecap="round">'
-                '<path d="M4 4l8 8M12 4l-8 8"/></svg>'),
+    # крестик кнопок модалки: 24 px, линия толще, чтобы легко попасть пальцем
+    "close_lg": ('<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" '
+                 f'fill="none" stroke="{TEXT}" stroke-width="2.5" stroke-linecap="round">'
+                 '<path d="M6 6l12 12M18 6L6 18"/></svg>'),
     "check":   ('<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" '
                 f'fill="none" stroke="{GREEN}" stroke-width="2" stroke-linecap="round" '
                 'stroke-linejoin="round"><circle cx="12" cy="12" r="10"/>'

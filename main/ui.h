@@ -30,7 +30,7 @@ typedef struct {
 
 /* Задачи трекеров. */
 #define TASK_MAX_LISTS 4
-#define TASK_MAX_ITEMS 10
+#define TASK_MAX_ITEMS 30
 
 typedef struct {
     char key[16];           /* «TASK-215» */

@@ -16,7 +16,7 @@ LV_FONT_DECLARE(tm_b48);    /* Montserrat 48 Bold, цифры */
 extern const uint8_t weather_icons[] asm("_binary_weather_bin_start");
 extern const uint8_t sunrise_icon[]  asm("_binary_sunrise_bin_start");
 extern const uint8_t sunset_icon[]   asm("_binary_sunset_bin_start");
-extern const uint8_t close_icon[]    asm("_binary_close_bin_start");
+extern const uint8_t close_icon[]    asm("_binary_close_lg_bin_start");
 extern const uint8_t check_icon[]    asm("_binary_check_bin_start");
 extern const uint8_t logo_frames[]   asm("_binary_logo_bin_start");
 
@@ -35,6 +35,7 @@ extern const uint8_t logo_frames[]   asm("_binary_logo_bin_start");
 #define LOGO_FRAME_MS  70
 #define WEATHER_ICONS  8
 #define POLZA_LOW_RUB  50
+#define COL_PRESSED    0x1C2330   /* карточка под пальцем */
 
 /* порядок совпадает с tools/export_icons.py */
 enum { W_CLEAR, W_NIGHT, W_PARTLY, W_CLOUDY, W_RAIN, W_SNOW, W_THUNDER, W_FOG };
@@ -70,6 +71,10 @@ static lv_obj_t *lbl_clock, *lbl_date;
 static lv_obj_t *lbl_balance, *lbl_balance_sub;
 static task_card_t tasks_tracker, tasks_jira;
 static lv_obj_t *toast;
+
+/* модалка со всеми задачами одного трекера */
+static lv_obj_t *modal, *modal_title, *modal_pill, *modal_list;
+static task_card_t *modal_card;
 
 static lv_image_dsc_t weather_dsc[WEATHER_ICONS];
 static lv_image_dsc_t sunrise_dsc, sunset_dsc, close_dsc, check_dsc;
@@ -328,19 +333,19 @@ static void logo_set_busy(bool busy)
 
 /* ---------- задачи ---------- */
 
-static void on_task_close(lv_event_t *e)
+static void modal_open(task_card_t *c);
+
+static void on_task_card(lv_event_t *e)
 {
-    task_card_t *c = lv_event_get_user_data(e);
-    int idx = (int)(intptr_t)lv_obj_get_user_data(lv_event_get_target(e));
-    if (!c->has_data || idx < 0 || idx >= c->data.count || !s_del_cb) {
-        return;
-    }
-    s_del_cb(c->data.id, c->data.items[idx].key);
+    modal_open(lv_event_get_user_data(e));
 }
 
 static void task_card_create(task_card_t *c, lv_obj_t *scr, int x, const char *title)
 {
     c->card = card_create(scr, x, 362, 228, 110);
+    lv_obj_add_flag(c->card, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_bg_color(c->card, lv_color_hex(COL_PRESSED), LV_STATE_PRESSED);
+    lv_obj_add_event_cb(c->card, on_task_card, LV_EVENT_CLICKED, c);
 
     /* заголовок и счётчик — flex-строка с зазором 8 */
     lv_obj_t *head = lv_obj_create(c->card);
@@ -384,7 +389,7 @@ static void task_card_create(task_card_t *c, lv_obj_t *scr, int x, const char *t
     lv_obj_set_style_bg_opa(c->rows, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(c->rows, 0, 0);
     lv_obj_set_style_pad_all(c->rows, 0, 0);
-    lv_obj_remove_flag(c->rows, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(c->rows, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
 }
 
 static void task_card_render(task_card_t *c)
@@ -430,27 +435,162 @@ static void task_card_render(task_card_t *c)
                                   LV_TEXT_ALIGN_LEFT);
         lv_label_set_text(key, it->key);
 
-        lv_obj_t *title = label_box(c->rows, &tm_m16, COL_TEXT, 12, y + 17, 160, 20,
+        lv_obj_t *title = label_box(c->rows, &tm_m16, COL_TEXT, 12, y + 17, 204, 20,
                                     LV_TEXT_ALIGN_LEFT);
         lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
         lv_label_set_text(title, it->title);
-
-        lv_obj_t *btn = lv_button_create(c->rows);
-        lv_obj_set_pos(btn, 176, y);
-        lv_obj_set_size(btn, 40, 40);
-        lv_obj_set_style_bg_opa(btn, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_bg_color(btn, lv_color_hex(COL_LINE), LV_STATE_PRESSED);
-        lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_STATE_PRESSED);
-        lv_obj_set_style_shadow_width(btn, 0, 0);
-        lv_obj_set_style_radius(btn, 8, 0);
-        lv_obj_set_user_data(btn, (void *)(intptr_t)n);
-        lv_obj_add_event_cb(btn, on_task_close, LV_EVENT_CLICKED, c);
-        lv_obj_center(image_at(btn, &close_dsc, 0, 0));
 
         if (n == 0 && shown > 1) {
             rect(c->rows, 12, 40, 204, 1, COL_LINE, 0);   /* y 68 от карточки */
         }
     }
+}
+
+/* ---------- модалка: все задачи трекера, крупные кнопки ---------- */
+
+static void modal_render(void);
+
+static void on_modal_close(lv_event_t *e)
+{
+    (void)e;
+    lv_obj_add_flag(modal, LV_OBJ_FLAG_HIDDEN);
+    modal_card = NULL;
+}
+
+static void on_modal_task_close(lv_event_t *e)
+{
+    int idx = (int)(intptr_t)lv_event_get_user_data(e);
+    if (!modal_card || idx < 0 || idx >= modal_card->data.count || !s_del_cb) {
+        return;
+    }
+    lv_obj_add_state(lv_event_get_target(e), LV_STATE_DISABLED);  /* от двойного нажатия */
+    s_del_cb(modal_card->data.id, modal_card->data.items[idx].key);
+}
+
+static lv_obj_t *big_button(lv_obj_t *parent, int size)
+{
+    lv_obj_t *btn = lv_button_create(parent);
+    lv_obj_set_size(btn, size, size);
+    lv_obj_set_style_bg_color(btn, lv_color_hex(COL_LINE), 0);
+    lv_obj_set_style_bg_color(btn, lv_color_hex(COL_MUTED), LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_opa(btn, LV_OPA_50, LV_STATE_DISABLED);
+    lv_obj_set_style_radius(btn, 12, 0);
+    lv_obj_set_style_shadow_width(btn, 0, 0);
+    lv_obj_center(image_at(btn, &close_dsc, 0, 0));
+    return btn;
+}
+
+static void modal_create(void)
+{
+    modal = lv_obj_create(lv_layer_top());
+    lv_obj_set_pos(modal, 0, 0);
+    lv_obj_set_size(modal, 480, 480);
+    lv_obj_set_style_bg_color(modal, lv_color_hex(COL_BG), 0);
+    lv_obj_set_style_bg_opa(modal, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(modal, 0, 0);
+    lv_obj_set_style_radius(modal, 0, 0);
+    lv_obj_set_style_pad_all(modal, 0, 0);
+    lv_obj_remove_flag(modal, LV_OBJ_FLAG_SCROLLABLE);
+
+    /* шапка: название трекера, счётчик, кнопка закрытия модалки */
+    modal_title = label_box(modal, &tm_sb20, COL_TEXT, 12, 8, 300, 48, LV_TEXT_ALIGN_LEFT);
+    lv_obj_set_width(modal_title, LV_SIZE_CONTENT);
+
+    modal_pill = lv_label_create(modal);
+    lv_obj_set_style_text_font(modal_pill, &tm_m12, 0);
+    lv_obj_set_style_text_color(modal_pill, lv_color_hex(COL_TEXT), 0);
+    lv_obj_set_style_bg_color(modal_pill, lv_color_hex(COL_LINE), 0);
+    lv_obj_set_style_bg_opa(modal_pill, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(modal_pill, 9, 0);
+    lv_obj_set_style_pad_hor(modal_pill, 7, 0);
+    lv_obj_set_style_pad_ver(modal_pill, 2, 0);
+
+    lv_obj_t *close = big_button(modal, 48);
+    lv_obj_set_style_bg_opa(close, LV_OPA_TRANSP, 0);
+    lv_obj_set_pos(close, 424, 8);
+    lv_obj_add_event_cb(close, on_modal_close, LV_EVENT_CLICKED, NULL);
+
+    /* список задач с прокруткой */
+    modal_list = lv_obj_create(modal);
+    lv_obj_set_pos(modal_list, 8, 64);
+    lv_obj_set_size(modal_list, 464, 408);
+    lv_obj_set_style_bg_opa(modal_list, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(modal_list, 0, 0);
+    lv_obj_set_style_pad_all(modal_list, 0, 0);
+    lv_obj_set_style_pad_row(modal_list, 8, 0);
+    lv_obj_set_flex_flow(modal_list, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_scroll_dir(modal_list, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(modal_list, LV_SCROLLBAR_MODE_ACTIVE);
+}
+
+static void modal_render(void)
+{
+    if (!modal_card) {
+        return;
+    }
+    const task_list_t *t = &modal_card->data;
+    int total = modal_card->has_data ? t->total : 0;
+    if (total < t->count) total = t->count;
+
+    lv_label_set_text(modal_title, lv_label_get_text(modal_card->title));
+    lv_obj_update_layout(modal_title);
+    lv_label_set_text_fmt(modal_pill, "%d", total);
+    lv_obj_set_pos(modal_pill, 12 + lv_obj_get_width(modal_title) + 8, 22);
+
+    lv_obj_clean(modal_list);
+
+    if (!modal_card->has_data || t->count == 0) {
+        lv_obj_t *box = lv_obj_create(modal_list);
+        lv_obj_set_size(box, 464, 300);
+        lv_obj_set_style_bg_opa(box, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(box, 0, 0);
+        lv_obj_set_style_pad_column(box, 8, 0);
+        lv_obj_set_flex_flow(box, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(box, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+                              LV_FLEX_ALIGN_CENTER);
+        lv_obj_remove_flag(box, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+        lv_image_set_src(lv_image_create(box), &check_dsc);
+        lv_obj_t *l = lv_label_create(box);
+        lv_obj_set_style_text_font(l, &tm_m16, 0);
+        lv_obj_set_style_text_color(l, lv_color_hex(COL_MUTED), 0);
+        lv_label_set_text(l, "Задач нет");
+        return;
+    }
+
+    /* строка задачи: ключ, название в две строки, кнопка 56×56 справа */
+    for (int i = 0; i < t->count; i++) {
+        lv_obj_t *row = card_create(modal_list, 0, 0, 464, 84);
+
+        lv_obj_t *key = label_box(row, &tm_m12, COL_ACCENT, 16, 10, 360, 16,
+                                  LV_TEXT_ALIGN_LEFT);
+        lv_label_set_text(key, t->items[i].key);
+
+        lv_obj_t *title = lv_label_create(row);
+        lv_obj_set_style_text_font(title, &tm_m16, 0);
+        lv_obj_set_style_text_color(title, lv_color_hex(COL_TEXT), 0);
+        lv_obj_set_style_text_line_space(title, 20 - lv_font_get_line_height(&tm_m16), 0);
+        lv_obj_set_pos(title, 16, 30);
+        lv_obj_set_size(title, 360, 40);           /* не больше двух строк */
+        lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
+        lv_label_set_text(title, t->items[i].title);
+
+        lv_obj_t *btn = big_button(row, 56);
+        lv_obj_align(btn, LV_ALIGN_RIGHT_MID, -12, 0);
+        lv_obj_add_event_cb(btn, on_modal_task_close, LV_EVENT_CLICKED,
+                            (void *)(intptr_t)i);
+    }
+}
+
+static void modal_open(task_card_t *c)
+{
+    if (!modal) {
+        modal_create();
+    }
+    modal_card = c;
+    modal_render();
+    lv_obj_scroll_to_y(modal_list, 0, LV_ANIM_OFF);
+    lv_obj_remove_flag(modal, LV_OBJ_FLAG_HIDDEN);
 }
 
 static task_card_t *card_for_label(const char *label)
@@ -466,7 +606,7 @@ void token_ui_create(void)
 {
     icon_dsc(&sunrise_dsc, sunrise_icon, 16, 16, LV_COLOR_FORMAT_RGB565A8);
     icon_dsc(&sunset_dsc, sunset_icon, 16, 16, LV_COLOR_FORMAT_RGB565A8);
-    icon_dsc(&close_dsc, close_icon, 16, 16, LV_COLOR_FORMAT_RGB565A8);
+    icon_dsc(&close_dsc, close_icon, 24, 24, LV_COLOR_FORMAT_RGB565A8);
     icon_dsc(&check_dsc, check_icon, 24, 24, LV_COLOR_FORMAT_RGB565A8);
     for (int i = 0; i < WEATHER_ICONS; i++) {
         icon_dsc(&weather_dsc[i], weather_icons + i * 32 * 32 * 3, 32, 32,
@@ -623,6 +763,9 @@ void token_ui_set_tasks(const task_list_t *lists, int count)
         c->data = lists[i];
         c->has_data = true;
         task_card_render(c);
+        if (modal_card == c) {
+            modal_render();
+        }
     }
     task_card_t *cards[] = { &tasks_tracker, &tasks_jira };
     bool seen[] = { seen_tracker, seen_jira };
@@ -631,6 +774,9 @@ void token_ui_set_tasks(const task_list_t *lists, int count)
             cards[i]->has_data = false;
             memset(&cards[i]->data, 0, sizeof(task_list_t));
             task_card_render(cards[i]);
+            if (modal_card == cards[i]) {
+                modal_render();
+            }
         }
     }
 }
@@ -657,6 +803,9 @@ void token_ui_remove_task(const char *list_id, const char *task_key)
             t->count--;
             if (t->total > 0) t->total--;
             task_card_render(cards[c]);
+            if (modal_card == cards[c]) {
+                modal_render();
+            }
             return;
         }
     }
@@ -679,6 +828,10 @@ void token_ui_toast(const char *text, bool success)
         lv_obj_set_style_pad_hor(toast, 12, 0);
         lv_obj_set_style_pad_ver(toast, 6, 0);
         lv_obj_align(toast, LV_ALIGN_BOTTOM_MID, 0, -130);
+    }
+    /* удаление не прошло — вернуть кнопкам активный вид */
+    if (!success && modal_card) {
+        modal_render();
     }
     lv_label_set_text(toast, text);
     lv_obj_set_style_bg_color(toast, lv_color_hex(success ? COL_GREEN : COL_RED), 0);

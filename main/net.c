@@ -97,6 +97,13 @@ static void parse_tasks(cJSON *root)
             task_item_t *it = &dst->items[dst->count];
             json_str(m, "task", it->key, sizeof(it->key));
             json_str(m, "subject", it->title, sizeof(it->title));
+            /* тег из темы письма («[Jira] …») только съедает место */
+            char *end = it->title[0] == '[' ? strchr(it->title, ']') : NULL;
+            if (end && end - it->title < 24) {
+                end++;
+                while (*end == ' ') end++;
+                memmove(it->title, end, strlen(end) + 1);
+            }
             if (it->key[0]) {
                 dst->count++;
             }
