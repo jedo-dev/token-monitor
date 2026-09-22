@@ -2,8 +2,7 @@
 """Иконки дашборда: SVG из макета Claude Design -> бинарники LVGL.
 
 Иконки однотонные, цвет запекается сразу: RGB565A8 (цвет + альфа).
-Логотип Claude рисуется на фоне карточки без альфы (RGB565), как просит
-спецификация, и нарезается на кадры поворота — это анимация «думает».
+Маскота на месте логотипа рисует отдельный скрипт export_mascot.py.
 
     python tools/export_icons.py
 """
@@ -81,22 +80,6 @@ SMALL = {
                 '<path d="M7.5 12.5l3 3 6-6.5"/></svg>'),
 }
 
-LOGO_SIZE = 112
-LOGO_FRAMES = 12          # поворот на 45° (симметрия звезды) за 12 кадров
-
-
-def logo_svg(angle_deg: float) -> str:
-    """Звезда Claude из макета: четыре луча, повёрнутые на angle."""
-    rays = ('<line x1="20" y1="56" x2="92" y2="56"/>'
-            '<line x1="30.5" y1="30.5" x2="81.5" y2="81.5"/>'
-            '<line x1="56" y1="20" x2="56" y2="92"/>'
-            '<line x1="81.5" y1="30.5" x2="30.5" y2="81.5"/>')
-    return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{LOGO_SIZE}" height="{LOGO_SIZE}" '
-            f'viewBox="0 0 112 112"><rect width="112" height="112" fill="#161B22"/>'
-            f'<g transform="rotate({angle_deg:.2f} 56 56)" fill="none" stroke="{ACCENT}" '
-            f'stroke-width="12" stroke-linecap="round">{rays}</g></svg>')
-
-
 def render(svg: str) -> Image.Image:
     return Image.open(io.BytesIO(bytes(resvg_py.svg_to_bytes(svg_string=svg)))).convert("RGBA")
 
@@ -132,11 +115,6 @@ def main():
         data = to_rgb565a8(render(svg))
         open(os.path.join(OUT, f"{name}.bin"), "wb").write(data)
         print(f"{name}.bin: {len(data)} байт")
-
-    frames = b"".join(to_rgb565(render(logo_svg(45 * i / LOGO_FRAMES)))
-                      for i in range(LOGO_FRAMES))
-    open(os.path.join(OUT, "logo.bin"), "wb").write(frames)
-    print(f"logo.bin: {LOGO_FRAMES} кадров {LOGO_SIZE}x{LOGO_SIZE}, {len(frames)} байт")
 
     # превью для глаз
     sheet = Image.new("RGBA", (len(WEATHER) * 40 + 8, 48), CARD + (255,))

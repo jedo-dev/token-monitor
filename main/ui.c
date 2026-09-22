@@ -6,6 +6,7 @@
 #include <string.h>
 #include "lvgl.h"
 #include "ui.h"
+#include "mascot_anim.h"
 
 LV_FONT_DECLARE(tm_m12);    /* Montserrat 12 Medium, с кириллицей */
 LV_FONT_DECLARE(tm_m16);    /* Montserrat 16 Medium, с кириллицей */
@@ -18,7 +19,7 @@ extern const uint8_t sunrise_icon[]  asm("_binary_sunrise_bin_start");
 extern const uint8_t sunset_icon[]   asm("_binary_sunset_bin_start");
 extern const uint8_t close_icon[]    asm("_binary_close_lg_bin_start");
 extern const uint8_t check_icon[]    asm("_binary_check_bin_start");
-extern const uint8_t logo_frames[]   asm("_binary_logo_bin_start");
+extern const uint8_t mascot_frames[] asm("_binary_mascot_bin_start");
 
 #define COL_BG      0x0D1117
 #define COL_CARD    0x161B22
@@ -30,9 +31,7 @@ extern const uint8_t logo_frames[]   asm("_binary_logo_bin_start");
 #define COL_RED     0xF85149
 #define COL_PURPLE  0x8B5CF6
 
-#define LOGO_SIZE      112
-#define LOGO_FRAMES    12
-#define LOGO_FRAME_MS  70
+#define SLEEP_AFTER_MS (5 * 60 * 1000)   /* столько без работы — и маскот засыпает */
 #define WEATHER_ICONS  8
 #define POLZA_LOW_RUB  50
 #define COL_PRESSED    0x1C2330   /* карточка под пальцем */
@@ -63,9 +62,7 @@ typedef struct {
 
 static lv_obj_t *dot, *lbl_link, *batt_fill, *lbl_batt;
 static limit_card_t lim_block, lim_week;
-static lv_obj_t *logo_img;
-static lv_timer_t *logo_timer;
-static int logo_frame;
+static lv_obj_t *mascot_img;
 static lv_obj_t *weather_img, *lbl_temp, *lbl_sunrise, *lbl_sunset;
 static lv_obj_t *lbl_clock, *lbl_date;
 static lv_obj_t *lbl_balance, *lbl_balance_sub;
@@ -78,7 +75,7 @@ static task_card_t *modal_card;
 
 static lv_image_dsc_t weather_dsc[WEATHER_ICONS];
 static lv_image_dsc_t sunrise_dsc, sunset_dsc, close_dsc, check_dsc;
-static lv_image_dsc_t logo_dsc[LOGO_FRAMES];
+static lv_image_dsc_t mascot_dsc[MASCOT_FRAMES];
 
 static task_delete_cb_t s_del_cb;
 
@@ -325,24 +322,96 @@ static void limit_hint(limit_card_t *c, const char *text)
     lv_obj_remove_flag(c->hint, LV_OBJ_FLAG_HIDDEN);
 }
 
-/* ---------- логотип: неподвижен в простое, «думает», пока Claude работает ---------- */
+/* ---------- маскот: стоит, печатает за ноутбуком или спит ----------
+   Кадры и последовательности — из tools/export_mascot.py. Состояние-цикл
+   крутится, пока не сменится цель; тогда играется переход (достать ноутбук,
+   уснуть, проснуться), и по его окончании цель проверяется снова — так
+   из сна в работу он сначала просыпается, потом берёт ноутбук. */
 
-static void logo_tick(lv_timer_t *t)
+typedef enum { M_IDLE, M_WORK, M_SLEEP } mascot_state_t;
+
+#define SEQ(s) (s), (int)(sizeof(s) / sizeof((s)[0]))
+
+static lv_timer_t *m_timer;
+static const mascot_step_t *m_seq;
+static int m_len, m_pos;
+static bool m_in_transition;
+static mascot_state_t m_state = M_IDLE;     /* куда ведёт текущая анимация */
+static bool m_busy;
+static uint32_t m_last_active;
+
+static void mascot_play(const mascot_step_t *seq, int len, bool transition)
 {
-    (void)t;
-    logo_frame = (logo_frame + 1) % LOGO_FRAMES;
-    lv_image_set_src(logo_img, &logo_dsc[logo_frame]);
+    m_seq = seq;
+    m_len = len;
+    m_pos = 0;
+    m_in_transition = transition;
 }
 
-static void logo_set_busy(bool busy)
+static void mascot_play_loop(void)
 {
-    if (busy && !logo_timer) {
-        logo_timer = lv_timer_create(logo_tick, LOGO_FRAME_MS, NULL);
-    } else if (!busy && logo_timer) {
-        lv_timer_delete(logo_timer);
-        logo_timer = NULL;
-        logo_frame = 0;
-        lv_image_set_src(logo_img, &logo_dsc[0]);
+    switch (m_state) {
+    case M_WORK:  mascot_play(SEQ(MASCOT_WORK), false); break;
+    case M_SLEEP: mascot_play(SEQ(MASCOT_SLEEP), false); break;
+    default:      mascot_play(SEQ(MASCOT_IDLE), false); break;
+    }
+}
+
+static mascot_state_t mascot_target(void)
+{
+    if (m_busy) {
+        return M_WORK;
+    }
+    return lv_tick_elaps(m_last_active) > SLEEP_AFTER_MS ? M_SLEEP : M_IDLE;
+}
+
+/* Переход из текущего состояния в сторону цели; state — куда он приведёт. */
+static void mascot_transition(mascot_state_t target)
+{
+    if (m_state == M_SLEEP) {
+        mascot_play(SEQ(MASCOT_WAKE), true);
+        m_state = M_IDLE;
+    } else if (m_state == M_WORK) {
+        mascot_play(SEQ(MASCOT_LAPTOP_OUT), true);
+        m_state = M_IDLE;
+    } else if (target == M_WORK) {
+        mascot_play(SEQ(MASCOT_LAPTOP_IN), true);
+        m_state = M_WORK;
+    } else {
+        mascot_play(SEQ(MASCOT_FALL_ASLEEP), true);
+        m_state = M_SLEEP;
+    }
+}
+
+static void mascot_show(void)
+{
+    const mascot_step_t *s = &m_seq[m_pos];
+    lv_image_set_src(mascot_img, &mascot_dsc[s->frame]);
+    lv_timer_set_period(m_timer, s->ms);
+}
+
+static void mascot_tick(lv_timer_t *t)
+{
+    (void)t;
+    mascot_state_t target = mascot_target();
+
+    if (!m_in_transition && m_state != target) {
+        mascot_transition(target);          /* цикл прерываем сразу */
+    } else if (++m_pos >= m_len) {
+        if (m_state != target) {
+            mascot_transition(target);
+        } else {
+            mascot_play_loop();
+        }
+    }
+    mascot_show();
+}
+
+static void mascot_set_busy(bool busy)
+{
+    m_busy = busy;
+    if (busy) {
+        m_last_active = lv_tick_get();
     }
 }
 
@@ -627,9 +696,9 @@ void token_ui_create(void)
         icon_dsc(&weather_dsc[i], weather_icons + i * 32 * 32 * 3, 32, 32,
                  LV_COLOR_FORMAT_RGB565A8);
     }
-    for (int i = 0; i < LOGO_FRAMES; i++) {
-        icon_dsc(&logo_dsc[i], logo_frames + i * LOGO_SIZE * LOGO_SIZE * 2,
-                 LOGO_SIZE, LOGO_SIZE, LV_COLOR_FORMAT_RGB565);
+    for (int i = 0; i < MASCOT_FRAMES; i++) {
+        icon_dsc(&mascot_dsc[i], mascot_frames + i * MASCOT_SIZE * MASCOT_SIZE * 2,
+                 MASCOT_SIZE, MASCOT_SIZE, LV_COLOR_FORMAT_RGB565);
     }
 
     lv_obj_t *scr = lv_screen_active();
@@ -638,11 +707,15 @@ void token_ui_create(void)
 
     header_create(scr);
 
-    /* ряд 1: лимиты и логотип */
+    /* ряд 1: лимиты и маскот */
     limit_create(&lim_block, scr, 8, "5 часов");
     limit_create(&lim_week, scr, 165, "Неделя");
-    lv_obj_t *logo_card = card_create(scr, 322, 48, 150, 149);
-    logo_img = image_at(logo_card, &logo_dsc[0], 19, 18);
+    lv_obj_t *mascot_card = card_create(scr, 322, 48, 150, 149);
+    mascot_img = image_at(mascot_card, &mascot_dsc[0], 11, 10);
+    m_last_active = lv_tick_get();
+    mascot_play_loop();
+    m_timer = lv_timer_create(mascot_tick, 100, NULL);
+    mascot_show();
 
     /* ряд 2: погода, время, polza.ai */
     lv_obj_t *wc = card_create(scr, 8, 205, 149, 149);
@@ -705,7 +778,7 @@ void token_ui_set_live(const token_data_t *d)
         limit_hint(&lim_block, hint);
         limit_hint(&lim_week, hint);
     }
-    logo_set_busy(d->busy);
+    mascot_set_busy(d->busy);
 
     if (d->weather_ok) {
         lv_image_set_src(weather_img, &weather_dsc[weather_icon(d->weather_code, d->is_day)]);
@@ -738,7 +811,7 @@ void token_ui_set_offline(void)
         return;
     }
     link_set("OFFLINE", COL_RED);
-    logo_set_busy(false);
+    mascot_set_busy(false);
 }
 
 void token_ui_set_battery(int pct)
