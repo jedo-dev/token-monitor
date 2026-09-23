@@ -1,5 +1,7 @@
 # Token Monitor
 
+<img width="1280" height="964" alt="preview" src="https://github.com/user-attachments/assets/51bd5a1e-d260-4a25-98dc-3fd166da4d7d" />
+
 Настольный дисплей на **Waveshare ESP32-S3-Touch-LCD-4 (Rev 4.0, 480×480)**:
 лимиты подписки Claude, баланс polza.ai и почта — на отдельном экране у рабочего
 места. Всё ходит по домашней сети, наружу уходят только запросы к самим сервисам.
