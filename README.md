@@ -231,3 +231,12 @@ case/     корпус: OpenSCAD и STL
 Серверная часть — отдельный репозиторий `magic-qube-dashboard-integration`:
 `displayService` сводит данные машин и отдаёт дисплею, `mailReaderService` —
 почта, `polzaService` — polza.ai.
+
+## Лицензия
+
+Код — [MIT](LICENSE).
+
+- Шрифты в `main/fonts/` сгенерированы из [Montserrat](https://github.com/JulietaUla/Montserrat)
+  и распространяются по [SIL Open Font License 1.1](https://openfontlicense.org).
+- Claude, Claude Code и маскот Claude Code — товарные знаки Anthropic.
+  Это неофициальный любительский проект, с Anthropic не связан.
