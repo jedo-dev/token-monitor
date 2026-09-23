@@ -1,6 +1,6 @@
 # Token Monitor
 
-<img width="1280" height="964" alt="preview" src="https://github.com/user-attachments/assets/51bd5a1e-d260-4a25-98dc-3fd166da4d7d" />
+<img src="docs/mascot_idle.gif" alt="Маскот Claude Code" width="128" align="right" />
 
 Настольный дисплей на **Waveshare ESP32-S3-Touch-LCD-4 (Rev 4.0, 480×480)**:
 лимиты подписки Claude, баланс polza.ai и почта — на отдельном экране у рабочего
@@ -8,6 +8,8 @@
 
 Идея подсмотрена у [Token Monitor](https://cnx-software.ru/2026/08/10/token-monitor-nastolnyj-displej-na-baze-esp32-s3-dlya-otslezhivaniya-ispolzovaniya-ii-assistentov-dlya-programmirovaniya-kraudfanding/)
 и [ClawdMeter](https://github.com/HermannBjorgvin/Clawdmeter), код свой.
+
+<img width="1280" height="964" alt="preview" src="https://github.com/user-attachments/assets/51bd5a1e-d260-4a25-98dc-3fd166da4d7d" />
 
 ## Как это устроено
 
@@ -103,6 +105,10 @@ Claude Code кладёт в `~/.claude/.credentials.json` после входа 
   Кадры и последовательности рисует `tools/export_mascot.py`
   (`main/icons/mascot.bin`, `main/mascot_anim.h`), порог сна — `SLEEP_AFTER_MS`
   в `main/ui.c`.
+
+  | Простой | Работа | Сон |
+  |:---:|:---:|:---:|
+  | <img src="docs/mascot_idle.gif" width="128" alt="простой" /> | <img src="docs/mascot_work.gif" width="128" alt="работа" /> | <img src="docs/mascot_sleep.gif" width="128" alt="сон" /> |
 - **Погода** — иконка по коду open-meteo (ясно, ночь, переменная облачность,
   облачно, дождь, снег, гроза, туман), температура, восход и закат.
 - **polza.ai** — баланс, красным при остатке меньше 50 ₽.
@@ -228,6 +234,7 @@ agent/    token_pusher.py — отправщик, claude_limits.py — лими�
           token_agent.py — сбор статистики и ccusage, polza.py
 deploy/   install-pusher-autostart.ps1 — автозапуск отправщика на Windows
 case/     корпус: OpenSCAD и STL
+docs/     GIF маскота для README (копии из tools/preview/)
 ```
 
 Серверная часть — отдельный репозиторий `magic-qube-dashboard-integration`:
